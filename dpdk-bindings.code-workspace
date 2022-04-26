@@ -1,0 +1,71 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"mesonbuild.configureOnOpen": true
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"type": "lldb",
+				"request": "launch",
+				"name": "Debug unit tests in library 'dpdk-sys'",
+				"cargo": {
+					"args": [
+						"test",
+						"--no-run",
+						"--lib",
+						"--package=dpdk-sys"
+					],
+					"filter": {
+						"name": "dpdk-sys",
+						"kind": "lib"
+					}
+				},
+				"args": [],
+				"cwd": "${workspaceFolder}"
+			},
+			{
+				"type": "lldb",
+				"request": "launch",
+				"name": "Debug executable 'dpdk-hello-world'",
+				"cargo": {
+					"args": [
+						"build",
+						"--bin=dpdk-hello-world",
+						"--package=dpdk-hello-world"
+					],
+					"filter": {
+						"name": "dpdk-hello-world",
+						"kind": "bin"
+					}
+				},
+				"args": [],
+				"cwd": "${workspaceFolder}"
+			},
+			{
+				"type": "lldb",
+				"request": "launch",
+				"name": "Debug unit tests in executable 'dpdk-hello-world'",
+				"cargo": {
+					"args": [
+						"test",
+						"--no-run",
+						"--bin=dpdk-hello-world",
+						"--package=dpdk-hello-world"
+					],
+					"filter": {
+						"name": "dpdk-hello-world",
+						"kind": "bin"
+					}
+				},
+				"args": [],
+				"cwd": "${workspaceFolder}"
+			}
+		]
+	}
+}

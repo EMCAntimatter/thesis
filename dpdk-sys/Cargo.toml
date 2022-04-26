@@ -1,0 +1,17 @@
+[package]
+name = "dpdk-sys"
+version = "0.1.0"
+edition = "2021"
+links = "libdpdk"
+
+[dependencies]
+libc = "0.2.124"
+
+[build-dependencies]
+libc = { version = "0.2.124" }
+pkg-config = "0.3.25"
+bindgen = { version = "0.59.2" }
+system-deps = "6.0.2"
+
+[package.metadata.system-deps]
+libdpdk = "22"

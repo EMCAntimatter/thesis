@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "./dpdk-sys",
+    "./dpdk-hello-world",
+]
+
+[profile.release]
+lto = true
+codegen-units = 1

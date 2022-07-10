@@ -5,13 +5,14 @@
 		}
 	],
 	"settings": {
-		"mesonbuild.configureOnOpen": true
+		"mesonbuild.configureOnOpen": true,
+		"git.ignoreLimitWarning": true
 	},
 	"launch": {
 		"version": "0.2.0",
 		"configurations": [
 			{
-				"type": "lldb",
+				"type": "gdb",
 				"request": "launch",
 				"name": "Debug unit tests in library 'dpdk-sys'",
 				"cargo": {

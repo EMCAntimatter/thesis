@@ -1,7 +1,9 @@
 [workspace]
 members = [
     "./dpdk-sys",
+    "./dpdk",
     "./dpdk-hello-world",
+    "./util/tailq-iterator",
 ]
 
 [profile.release]

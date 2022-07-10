@@ -12,6 +12,7 @@ libc = { version = "0.2.124" }
 pkg-config = "0.3.25"
 bindgen = { version = "0.59.2" }
 system-deps = "6.0.2"
+cc = "1.0.73"
 
 [package.metadata.system-deps]
 libdpdk = "22"

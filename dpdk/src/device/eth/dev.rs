@@ -6,34 +6,34 @@ use dpdk_sys::{
 };
 
 
-pub type PortId = u16;
-pub type QueueId = u16;
+pub type EthdevPortId = u16;
+pub type EventQueueId = u16;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthDriverError {
     #[error("Error starting port {port}, rx queue {queue}, received driver error {driver_error}")]
     PortRxQueueStartError {
-        port: PortId,
-        queue: QueueId,
+        port: EthdevPortId,
+        queue: EventQueueId,
         driver_error: i32,
         backtrace: Backtrace,
     },
     #[error("Error starting port {port}, tx queue {queue}, received driver error {driver_error}")]
     PortTxQueueStartError {
-        port: PortId,
-        queue: QueueId,
+        port: EthdevPortId,
+        queue: EventQueueId,
         driver_error: i32,
         backtrace: Backtrace,
     },
     #[error("Error configuring port {port}, received driver error {driver_error}")]
     PortConfigureError {
-        port: PortId,
+        port: EthdevPortId,
         driver_error: i32,
         backtrace: Backtrace,
     },
     #[error("Error starting port {port}, recieved driver error {driver_error}")]
     PortStartError {
-        port: PortId,
+        port: EthdevPortId,
         driver_error: i32,
         backtrace: Backtrace,
     }
@@ -53,7 +53,7 @@ pub fn socket_id() -> u32 {
     unsafe { rte_socket_id() }
 }
 
-pub fn socket_id_for_port(port_id: PortId) -> Option<u32> {
+pub fn socket_id_for_port(port_id: EthdevPortId) -> Option<u32> {
     let socket = unsafe { rte_eth_dev_socket_id(port_id) };
     if socket == -1 {
         None
@@ -63,7 +63,7 @@ pub fn socket_id_for_port(port_id: PortId) -> Option<u32> {
 }
 
 pub fn configure_port(
-    port: PortId,
+    port: EthdevPortId,
     num_rx_queues: u16,
     num_tx_queues: u16,
     port_conf: &rte_eth_conf,
@@ -81,7 +81,7 @@ pub fn configure_port(
 }
 
 pub fn setup_port_queues(
-    port: PortId,
+    port: EthdevPortId,
     pool: &mut PktMbufPool,
     num_rx_queues: u16,
     num_tx_queues: u16,
@@ -137,7 +137,7 @@ pub fn setup_port_queues(
     Ok(())
 }
 
-pub fn start_port(port: PortId) -> Result<(), EthDriverError> {
+pub fn start_port(port: EthdevPortId) -> Result<(), EthDriverError> {
     let ret = unsafe { rte_eth_dev_start(port) };
     if ret < 0 {
         Err(EthDriverError::PortStartError { port, driver_error: ret, backtrace: Backtrace::capture() })

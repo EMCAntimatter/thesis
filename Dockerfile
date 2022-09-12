@@ -8,7 +8,7 @@ RUN apt install -y \
     python3 python3-pyelftools python3-pip ninja-build \
     numactl zlib1g-dev libpcap-dev libbpf-dev libssl-dev \
     git cmake llvm-dev libnl-3-dev libnl-route-3-dev wget \
-    ccache libnuma-dev libpci-dev
+    ccache libnuma-dev libpci-dev clangd babeltrace
 
 ENV CFLAGS="-g3 -march=native -mtune=native -gdwarf -ggdb3"
 ENV CCACHE_DIR=/ccache
@@ -25,7 +25,7 @@ RUN pip3 install meson
 
 RUN wget https://git.dpdk.org/dpdk/snapshot/dpdk-22.03.tar.gz && tar xf dpdk-22.03.tar.gz
 WORKDIR /dpdk-22.03/
-RUN meson -Dtests=false -Dc_std=c18 -Denable_drivers=mlx5 /dpdk-22.03/build
+RUN meson -Dtests=false -Dc_std=c18 /dpdk-22.03/build
 
 # download
 RUN --mount=type=cache,target=/dpdk-22.03 \

@@ -1,12 +1,11 @@
-use core::panic;
-use std::{ptr::{slice_from_raw_parts, slice_from_raw_parts_mut}, sync::atomic::AtomicPtr, intrinsics::transmute};
 
-use dpdk_sys::{rte_eth_rx_burst, rte_mbuf, RTE_MAX_ETHPORTS, RTE_MAX_QUEUES_PER_PORT, rte_eth_fp_ops, rte_eth_dev_is_valid_port, __rte_ethdev_trace_rx_burst, rte_eth_call_rx_callbacks};
-use libc::c_void;
+use std::{ptr::{slice_from_raw_parts_mut}, sync::atomic::AtomicPtr, intrinsics::transmute};
 
-use super::dev::{PortId, QueueId};
+use dpdk_sys::{rte_mbuf, RTE_MAX_ETHPORTS, RTE_MAX_QUEUES_PER_PORT, rte_eth_fp_ops, rte_eth_dev_is_valid_port, rte_eth_call_rx_callbacks};
 
-pub fn receive_burst<const NUM_PACKETS: u16>(port_id: PortId, queue_id: QueueId, rx_buffer: &mut[&mut rte_mbuf; NUM_PACKETS as usize]) -> u16 {
+use super::dev::{EthdevPortId, EventQueueId};
+
+pub fn receive_burst<const NUM_PACKETS: u16>(port_id: EthdevPortId, queue_id: EventQueueId, rx_buffer: &mut[&mut rte_mbuf; NUM_PACKETS as usize]) -> u16 {
     debug_assert!(u32::from(port_id) < RTE_MAX_ETHPORTS, "Invalid port id {port_id}, maximum is {RTE_MAX_ETHPORTS}.");
     debug_assert!(u32::from(queue_id) < RTE_MAX_QUEUES_PER_PORT, "Invalid queue id {queue_id}, maximum is {RTE_MAX_QUEUES_PER_PORT}");
     debug_assert!(unsafe { rte_eth_dev_is_valid_port(port_id) } == 1, "Invalid port id {port_id}");

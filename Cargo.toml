@@ -1,11 +1,13 @@
 [workspace]
 members = [
-    "./dpdk-sys",
-    "./dpdk",
-    "./dpdk-hello-world",
-    "./util/tailq-iterator",
+  "./dpdk-sys",
+  "./dpdk",
+  "./dpdk-hello-world",
+  "./util/tailq-iterator",
 ]
 
 [profile.release]
-lto = true
 codegen-units = 1
+lto = true
+overflow-checks = false
+opt-level = 3

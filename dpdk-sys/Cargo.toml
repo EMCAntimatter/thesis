@@ -10,7 +10,7 @@ libc = "0.2.124"
 [build-dependencies]
 libc = { version = "0.2.124" }
 pkg-config = "0.3.25"
-bindgen = { version = "0.59.2" }
+bindgen = { version = "0.60.1" }
 system-deps = "6.0.2"
 cc = "1.0.73"
 

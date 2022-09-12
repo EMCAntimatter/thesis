@@ -22,7 +22,7 @@ impl Display for PCIAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:04}:{:02}.{:02}.{:1}",
+            "{:04x}:{:02x}:{:02x}.{:1x}",
             self.domain, self.bus, self.device, self.function
         )
     }
@@ -98,6 +98,9 @@ pub struct DPDKConfig {
     pub pci_options: PCIOptions,
     pub virtual_devices: Vec<VirtualDevice>,
     pub num_memory_channels: Option<u64>,
+    pub enable_telemetry: bool,
+    pub trace: Option<String>,
+    pub iova_mode: Option<IOVAMode>,
 }
 
 impl DPDKConfig {
@@ -109,7 +112,7 @@ impl DPDKConfig {
             .map(|arg| CString::new(arg).unwrap())
             .collect_vec();
         let c_args = args.iter().map(|arg| arg.as_ptr() as *mut libc::c_char).collect_vec();
-        println!("{}", unsafe { dpdk_sys::per_lcore__rte_errno });
+        // println!("{}", unsafe { dpdk_sys::per_lcore__rte_errno });
         let ret = unsafe { dpdk_sys::rte_eal_init(c_args.len() as i32, c_args.as_ptr() as *mut _) };
 
         if ret >= 0 {
@@ -131,6 +134,9 @@ impl Default for DPDKConfig {
             pci_options: Default::default(),
             virtual_devices: Default::default(),
             num_memory_channels: Default::default(),
+            enable_telemetry: false,
+            trace: None,
+            iova_mode: None,
         }
     }
 }
@@ -173,15 +179,32 @@ impl Display for DPDKConfig {
         }
 
         for virtual_device in &self.virtual_devices {
-            write!(f, "--vdevs {} ", virtual_device)?;
+            write!(f, "--vdev={} ", virtual_device)?;
         }
 
         if let Some(memory_channels) = &self.num_memory_channels {
             write!(f, "-n {} ", memory_channels)?
+        }
+
+        if self.enable_telemetry {
+            write!(f, "--telemetry ")?;
         } else {
-            write!(f, "-n 1 ")?
+            write!(f, "--no-telemetry ")?;
+        }
+
+        if let Some(trace) = &self.trace {
+            write!(f, "--trace={} ", trace)?;
+        }
+
+        if let Some(iova_mode) = &self.iova_mode {
+            write!(f, "--iova-mode ")?;
+            match iova_mode {
+                IOVAMode::PA => write!(f, "pa ")?,
+                IOVAMode::VA => write!(f, "va ")?,
+            }
         }
 
         Ok(())
     }
 }
+ 

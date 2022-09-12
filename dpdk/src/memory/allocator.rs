@@ -1,4 +1,4 @@
-use dpdk_sys::{rte_calloc, rte_free, rte_malloc, rte_realloc, rte_zmalloc};
+use dpdk_sys::{rte_free, rte_malloc, rte_realloc, rte_zmalloc};
 
 use std::alloc::{GlobalAlloc, Layout};
 
@@ -11,7 +11,7 @@ unsafe impl GlobalAlloc for DPDKAllocator {
         return rte_malloc(std::ptr::null(), size as dpdk_sys::size_t, align as u32) as *mut u8;
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
         rte_free(ptr as *mut libc::c_void);
     }
 
@@ -23,7 +23,6 @@ unsafe impl GlobalAlloc for DPDKAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let size = layout.size();
         let align = layout.align();
 
         return rte_realloc(

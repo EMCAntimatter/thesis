@@ -10,39 +10,39 @@ pub enum RingType {
     MultipleHTS,
 }
 
-trait RteRingProducerHandle<'ring_lifetime, T> where T: 'ring_lifetime, Self: 'ring_lifetime {
+pub trait RteRingProducerHandle<'ring_lifetime, T> where T: 'ring_lifetime, Self: 'ring_lifetime {
     fn enqueue_bulk(&'ring_lifetime mut self, objects: impl AsRef<[&'ring_lifetime mut T]>);
     fn enqueue(&'ring_lifetime mut self, objects: impl AsRef<[&'ring_lifetime mut T]>);
 }
 
-trait RteRingConsumerHandle<'ring_lifetime, T> where T: 'ring_lifetime, Self: 'ring_lifetime {
+pub trait RteRingConsumerHandle<'ring_lifetime, T> where T: 'ring_lifetime, Self: 'ring_lifetime {
     fn dequeue_bulk(&'ring_lifetime mut self, objects: &mut [&mut T], n: u32);
     fn dequeue(&'ring_lifetime mut self, objects: &mut [&mut T]);
 }
 
 
-struct RteRingSPHandle<T> {
+pub struct RteRingSPHandle<T> {
     ring: Arc<RteRing<T>>,
     _phantom: PhantomData<*mut dpdk_sys::rte_ring>
 }
 
 #[derive(Clone)]
-struct RteRingMPHandle<T> {
+pub struct RteRingMPHandle<T> {
     ring: Arc<RteRing<T>>,
 }
 
-struct RteRingSCHandle<T> {
+pub struct RteRingSCHandle<T> {
     ring: Arc<RteRing<T>>,
     _phantom: PhantomData<*mut dpdk_sys::rte_ring>
 }
 
 #[derive(Clone)]
-struct RteRingMCHandle<T> {
+pub struct RteRingMCHandle<T> {
     ring: Arc<RteRing<T>>
 }
 
 
-struct RteRing<T> {
+pub struct RteRing<T> {
     inner: *mut dpdk_sys::rte_ring,
     _phantom: PhantomData<*mut T>
 }

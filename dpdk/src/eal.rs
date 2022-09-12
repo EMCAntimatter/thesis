@@ -1,4 +1,4 @@
-use std::{backtrace::Backtrace, process::exit};
+use std::process::exit;
 
 use dpdk_sys::rte_exit;
 pub use dpdk_sys::{per_lcore__lcore_id, per_lcore__rte_errno, per_lcore__thread_id};

@@ -10,9 +10,12 @@ dpdk-sys = {path = "../dpdk-sys"}
 libc = "0.2.125"
 itertools = "0.10.3"
 derive_builder = "0.11.2"
-thiserror = "1.0.31"
+thiserror = "1.0"
 tailq_iterator = {path = "../util/tailq-iterator"}
 num = "0.4.0"
 num-derive = "0.3.3"
 num-traits = "0.2.15"
 bitflags = "1.3.2"
+static_assertions = "1.1.0"
+
+parking_lot = "0.12.1"

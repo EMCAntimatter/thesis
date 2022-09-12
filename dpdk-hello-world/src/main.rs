@@ -1,121 +1,177 @@
+#![feature(once_cell)]
+#![feature(generic_const_exprs)]
+
+
+pub mod event_handlers;
+pub mod semaphore;
+pub mod workers;
+pub mod message;
+pub mod log;
+
 use anyhow::Context;
 use dpdk::{
     self,
-    config::{DPDKConfig, VirtualDevice},
-    device::{eth::{
-        dev::{iter_ports, setup_port_queues, start_port, EthDriverError},
-        rx::receive_burst,
-    }, event::dev::{configure_eventdev_simple, event_queue_config::EventQueueConfig, event_port_config::{EventPortConfig, link_port_to_queue}, start_event_dev}},
-    eal::{current_lcore_id, dpdk_exit},
-    memory::pktmbuf_pool::PktMbufPool,
-    raw::{
-        rte_eal_cleanup, rte_eal_mp_wait_lcore, rte_eth_conf, rte_eth_rxmode, rte_mbuf, rte_pktmbuf_free_bulk, RTE_ETHER_MAX_LEN,
-    },
-};
-use libc::{c_int, c_void};
-use std::{mem::MaybeUninit, ptr::null_mut};
-
-extern "C" fn lcore_hello(_unused: *mut c_void) -> c_int {
-    let lcore = current_lcore_id();
-    if lcore != 1 {
-        println!("Lcore {} exiting", lcore);
-        return 0;
-    }
-
-    let mut pkt_buffer: [&mut rte_mbuf; 32] = unsafe { MaybeUninit::zeroed().assume_init() };
-
-    loop {
-        for port in iter_ports() {
-            let num_packets: usize = receive_burst::<32>(port, 0, &mut pkt_buffer) as usize;
-
-            for i in 0..num_packets {
-                let pkt_mbuf = &pkt_buffer[i];
-                println!("Got packet on {}", pkt_mbuf.port);
-            }
-            unsafe {
-                rte_pktmbuf_free_bulk(std::mem::transmute(&pkt_buffer), num_packets as u32);
-            }
-        }
-    }
-    return 0;
-}
-
-fn port_init(port: u16, pool: &mut PktMbufPool) -> Result<(), EthDriverError> {
-    let port_conf = rte_eth_conf {
-        rxmode: rte_eth_rxmode {
-            mtu: RTE_ETHER_MAX_LEN,
-            ..Default::default()
+    config::{DPDKConfig, VirtualDevice, PCIAddress, IOVAMode},
+    device::{
+        eth::dev::{EthdevPortId, EventQueueId},
+        event::{
+            dev::{
+                event_port_config::{link_port_to_queue, EventPortConfig},
+                event_queue_config::EventQueueConfig,
+                setup_eventdev_simple, start_event_dev,
+            },
+            eth::{rx::rx_adapter::stop_rx_adapter, tx::tx_adapter::stop_tx_adapter},
+            EventDeviceId, EventPortId,
         },
-        ..Default::default()
-    };
+    },
+    raw::{rte_eal_cleanup, rte_eal_mp_wait_lcore, rte_trace_save, RTE_EVENT_DEV_PRIORITY_NORMAL},
+};
 
-    setup_port_queues(port, pool, 1, 1, &port_conf, 128, 512)?;
+use semaphore::SpinSemaphore;
+use std::{
+    collections::HashMap,
+    ptr::null_mut,
+    sync::atomic::{fence, AtomicBool},
+};
+use workers::{lcore_init, rx_adapter_worker, tx_adapter_worker};
 
-    start_port(port)?;
+/// Services are set up
+static SERVICE_SETUP_DONE: AtomicBool = AtomicBool::new(false);
 
-    Ok(())
-}
+/// Time to terminate
+static TERMINATE: AtomicBool = AtomicBool::new(false);
+static RUNNING: SpinSemaphore = SpinSemaphore::new(3);
 
-fn main() -> Result<(), anyhow::Error> {
+fn apply_config() {
     DPDKConfig {
-        cores: dpdk::config::CoreConfig::List(vec![1, 2, 3, 4]),
+        cores: dpdk::config::CoreConfig::List(vec![1, 2, 3]),
         main_lcore: None,
-        service_core_mask: None,
-        pci_options: dpdk::config::PCIOptions::NoPCI,
+        service_core_mask: Some(0b11),
+        pci_options: dpdk::config::PCIOptions::PCI {
+            blocked_devices: vec![],
+            allowed_devices: vec![
+                PCIAddress { domain: 0, bus: 2, device: 0, function: 0 }
+            ],
+        },
         virtual_devices: vec![
-            VirtualDevice::with_driver("")
+            VirtualDevice {
+                driver: "event_sw".to_string(),
+                id: 0,
+                options: HashMap::from([
+                    // ("credit_quanta".to_string(), "64".to_string())
+                ]),
+            },
+            VirtualDevice {
+                driver: "net_pcap".to_string(),
+                id: 0,
+                options: HashMap::from([
+                    (
+                        "rx_pcap".to_string(),
+                        "./inputs/a.pcap".to_string(),
+                    ),
+                    (
+                        "tx_pcap".to_string(),
+                        "./outputs/a.pcap".to_string(),
+                    ),
+                    ("infinite_rx".to_string(), "1".to_string()),
+                ]),
+            },
         ],
-        num_memory_channels: Some(1),
+        num_memory_channels: None,
+        enable_telemetry: true,
+        // trace: Some(".*".to_string()),
+        trace: None,
+        // iova_mode: Some(IOVAMode::PA),
+        iova_mode: Some(IOVAMode::PA),
     }
     .apply()
     .expect("Error configuring EAL");
+}
 
-    const NUM_EVENT_PORTS: u16 = 4;
-    const NUM_EVENT_QUEUES: u16 = 2;
+// eventdev setup
+const NUM_EVENT_PORTS: u16 = 3;
+const NUM_EVENT_QUEUES: u16 = 2;
 
-    configure_eventdev_simple(0, NUM_EVENT_PORTS as u8, NUM_EVENT_QUEUES as u8)
+// ports
+const RX_ADAPTER_INPUT_PORT_ID: EventPortId = 0;
+const EVENT_HANDLER_PORT_ID: EventPortId = 1;
+const TX_ADAPTER_INPUT_PORT_ID: EventPortId = 2;
+
+// queues
+const RX_ADAPTER_OUTPUT_QUEUE_ID: EventQueueId = 0;
+const TX_ADAPTER_INPUT_QUEUE_ID: EventQueueId = 1;
+
+// devs
+const EVENTDEV_DEVICE_ID: EventDeviceId = 0;
+const ETHDEV_PORT_ID: EthdevPortId = 0;
+
+fn main() -> Result<(), anyhow::Error> {
+    apply_config();
+
+    setup_eventdev_simple(0, NUM_EVENT_PORTS as u8, NUM_EVENT_QUEUES as u8)
         .context("Failed to configure event device 0")?;
-    
-    let queue_config = EventQueueConfig::default();
+
+    let queue_config = EventQueueConfig {
+        config_type: dpdk::device::event::dev::event_queue_config::EventQueueConfigType::PARALLEL,
+        is_single_link: true,
+        priority: RTE_EVENT_DEV_PRIORITY_NORMAL as u8,
+    };
 
     for i in 0..NUM_EVENT_QUEUES {
-        queue_config.apply_to_eventdev_queue(0, i)?;
-    }
-    
-
-    let port_config = EventPortConfig::default();
-
-    for i in 0..NUM_EVENT_PORTS {
-        port_config.setup_port(0, i)?;
+        queue_config.apply_to_eventdev_queue(EVENTDEV_DEVICE_ID, i)?;
     }
 
-    link_port_to_queue(0, 0, &[0])?;
-    link_port_to_queue(0, 0, &[0])?;
+    let mut input_port_config =
+        EventPortConfig::default_for_port(EVENTDEV_DEVICE_ID, RX_ADAPTER_INPUT_PORT_ID);
 
-    start_event_dev()?;
+    input_port_config.new_event_threshold = 1;
+
+    input_port_config.setup_port(EVENTDEV_DEVICE_ID, RX_ADAPTER_INPUT_PORT_ID)?;
+
+    let output_port_config =
+        EventPortConfig::default_for_port(EVENTDEV_DEVICE_ID, EVENT_HANDLER_PORT_ID);
+
+    output_port_config.setup_port(EVENTDEV_DEVICE_ID, EVENT_HANDLER_PORT_ID)?;
+    output_port_config.setup_port(EVENTDEV_DEVICE_ID, TX_ADAPTER_INPUT_PORT_ID)?;
+
+    link_port_to_queue(
+        EVENTDEV_DEVICE_ID,
+        EVENT_HANDLER_PORT_ID,
+        &[RX_ADAPTER_OUTPUT_QUEUE_ID as u8],
+    )?;
+    link_port_to_queue(
+        EVENTDEV_DEVICE_ID,
+        TX_ADAPTER_INPUT_PORT_ID,
+        &[TX_ADAPTER_INPUT_QUEUE_ID as u8],
+    )?;
+
+    start_event_dev(EVENTDEV_DEVICE_ID)?;
+
+    rx_adapter_worker();
+    tx_adapter_worker();
+
+    fence(std::sync::atomic::Ordering::SeqCst);
 
     dpdk::raw::rte_lcore_foreach_worker(|lcore_id| unsafe {
-        dpdk::raw::rte_eal_remote_launch(Some(lcore_hello), null_mut(), lcore_id);
+        dpdk::raw::rte_eal_remote_launch(Some(lcore_init), null_mut(), lcore_id);
     });
 
-    // let nb_ports = dpdk::device::eth::dev::num_ports_available();
+    unsafe {
+        rte_trace_save();
+    }
 
-    // println!("There are {} ports available", nb_ports);
+    let mut buf = String::new();
+    std::io::stdin().read_line(&mut buf).ok();
 
-    // let mut mbuf_pool =
-    //     dpdk::memory::pktmbuf_pool::PktMbufPool::new("MBUF_POOL\0", 8191 + nb_ports as u32, 250)
-    //         .expect("Unable to intialize membuf pool.");
-
-    // for port in iter_ports() {
-    //     port_init(port, &mut mbuf_pool)?;
-    // }
-
-    // lcore_hello(null_mut());
+    TERMINATE.store(true, std::sync::atomic::Ordering::SeqCst);
+    RUNNING.take_max(); // wait for everything to finish
+    stop_tx_adapter(0);
+    stop_rx_adapter(0);
 
     unsafe {
         rte_eal_mp_wait_lcore();
-
         rte_eal_cleanup();
     }
-    dpdk_exit(0, "Success");
+    Ok(())
+    // dpdk_exit(0, "Success");
 }

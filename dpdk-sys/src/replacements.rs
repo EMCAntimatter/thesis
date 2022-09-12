@@ -1,8 +1,7 @@
-use crate::{bindings_meson::{
-    rte_get_next_lcore,
-    RTE_MAX_LCORE,
-    __BindgenBitfieldUnit,
-}, rte_mbuf};
+use crate::{
+    bindings_meson::{__BindgenBitfieldUnit, rte_get_next_lcore, RTE_MAX_LCORE},
+    rte_mbuf, rte_mempool,
+};
 
 extern "C" {
     #[thread_local]
@@ -14,7 +13,6 @@ extern "C" {
     #[thread_local]
     pub static mut per_lcore__thread_id: libc::c_int;
 }
-
 
 #[macro_export]
 macro_rules! RTE_LCORE_FOREACH {
@@ -308,11 +306,22 @@ extern "C" {
     /// * `rx_pkts` - The address of an array of pointers to `rte_mbuf` structures that
     ///   must be large enough to store *nb_pkts* pointers in it.
     /// * `nb_pkts` - The maximum number of packets to retrieve. The value must be divisible by 8 in order to work with any driver.
-    /// 
+    ///
     /// @return
     ///   The number of packets actually retrieved, which is the number
     ///   of pointers to *rte_mbuf* structures effectively supplied to the
     ///   *rx_pkts* array.
     ////
-    pub fn rte_eth_rx_burst(port_id: u16, queue_id: u16, rx_pkts: *mut*mut rte_mbuf, nb_pkts: u16) -> u16;
+    pub fn rte_eth_rx_burst(
+        port_id: u16,
+        queue_id: u16,
+        rx_pkts: *mut *mut rte_mbuf,
+        nb_pkts: u16,
+    ) -> u16;
 }
+
+extern "C" {
+    pub fn rte_pktmbuf_alloc(mp: *mut rte_mempool) -> *mut rte_mbuf;
+    pub fn rte_pktmbuf_alloc_bulk(mp: *mut rte_mempool, mbufs: *mut *mut rte_mbuf, count: u32) -> *mut rte_mbuf;
+}
+

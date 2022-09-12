@@ -1,0 +1,38 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the README at:
+// https://github.com/microsoft/vscode-dev-containers/tree/v0.231.6/containers/docker-existing-dockerfile
+{
+	"name": "Existing Dockerfile",
+	// Sets the run context to one level up instead of the .devcontainer folder.
+	"context": "..",
+	// Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
+	"dockerFile": "../Dockerfile",
+	// Set *default* container specific settings.json values on container create.
+	"settings": {},
+	// Add the IDs of extensions you want installed when the container is created.
+	"extensions": [
+		"surajbarkale.ninja",
+		"serayuzgur.crates",
+		"matklad.rust-analyzer",
+		"vadimcn.vscode-lldb",
+		"bungcip.better-toml",
+		"rust-lang.rust-analyzer",
+		"llvm-vs-code-extensions.vscode-clangd"
+	],
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+	
+	// This is done as a post-install command so we can use ccache while developing
+	// "postCreateCommand": "ninja install -C /dpdk-22.03/build",
+	// Uncomment when using a ptrace-based debugger like C++, Go, and Rust
+	"runArgs": [
+		"--privileged"
+	],
+	// Uncomment to use the Docker CLI from inside the container. See https://aka.ms/vscode-remote/samples/docker-from-docker.
+	"mounts": [
+		"source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+		"source=ccache,target=/ccache,type=volume",
+		"source=/dev/hugepages,target=/dev/hugepages,type=bind"
+	],
+	// Uncomment to connect as a non-root user if you've added one. See https://aka.ms/vscode-remote/containers/non-root.
+	// "remoteUser": "vscode"
+}

@@ -11,3 +11,7 @@ pub fn str_to_c_string(s: impl AsRef<str>) -> CString {
         CString::from_vec_unchecked(bytes)
     }
 }
+
+pub fn cast_str_to_i8_ptr<'a>(s: &'a str) -> *const i8 {
+    s.as_ptr() as *const i8
+}

@@ -2,15 +2,10 @@ use std::{backtrace::Backtrace, mem::MaybeUninit};
 
 use dpdk_sys::{
     rte_event_dev_config, rte_event_dev_configure, rte_event_dev_info, rte_event_dev_info_get,
-    rte_event_port_link, rte_event_queue_conf, RTE_EVENT_DEV_PRIORITY_NORMAL,
-    RTE_SCHED_TYPE_ATOMIC, rte_event_dev_start, ESTALE, ENOLINK,
+    rte_event_dev_start, ENOLINK, ESTALE,
 };
-use libc::EDQUOT;
 
-use crate::{
-    device::eth::dev::{iter_ports, PortId, QueueId},
-    eal::RteErrnoValue,
-};
+use crate::device::eth::dev::iter_ports;
 
 use super::{
     eth::rx::{get_rx_capabilities_by_id, EventDevRxCapabilities},
@@ -18,21 +13,6 @@ use super::{
 };
 
 use derive_builder::Builder;
-
-pub fn do_capability_setup() {
-    let mut capabilities = EventDevRxCapabilities::empty();
-
-    for ethdev_id in iter_ports() {
-        capabilities = capabilities & (get_rx_capabilities_by_id(0, ethdev_id))
-    }
-    let pipeline_rx_capabilities = capabilities | EventDevRxCapabilities::hw_packet_transfer;
-
-    let mut eventdev_info: rte_event_dev_info = unsafe { MaybeUninit::zeroed().assume_init() };
-
-    unsafe {
-        rte_event_dev_info_get(0, &mut eventdev_info);
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum EventDevConfigDriverError {
@@ -43,10 +23,41 @@ pub enum EventDevConfigDriverError {
         backtrace: Backtrace,
     },
     #[error("Invalid configuration")]
-    InvalidConfiguration(#[from] EventDevConfigBuilderError, Backtrace),
+    InvalidConfiguration(#[from] EventDevConfigBuilderError, Backtrace)
 }
 
-#[derive(Debug, Default, Builder)]
+pub fn get_eventdev_info(
+    device_id: EventDeviceId,
+) -> Result<rte_event_dev_info, EventDevConfigDriverError> {
+    let mut eventdev_info: rte_event_dev_info = unsafe { MaybeUninit::zeroed().assume_init() };
+
+    let err = unsafe { rte_event_dev_info_get(device_id, &mut eventdev_info) };
+
+    if err != 0 {
+        Err(EventDevConfigDriverError::DriverConfigurationFailureError {
+            eventdev_id: device_id,
+            driver_error: err,
+            backtrace: Backtrace::capture(),
+        })
+    } else {
+        Ok(eventdev_info)
+    }
+}
+
+pub fn do_capability_setup(
+    device_id: EventDeviceId,
+) -> Result<rte_event_dev_info, EventDevConfigDriverError> {
+    let mut capabilities = EventDevRxCapabilities::empty();
+
+    for ethdev_id in iter_ports() {
+        capabilities = capabilities & (get_rx_capabilities_by_id(device_id, ethdev_id))
+    }
+    let _pipeline_rx_capabilities = capabilities | EventDevRxCapabilities::HW_PACKET_TRANSFER;
+
+    get_eventdev_info(device_id)
+}
+
+#[derive(Debug, Builder)]
 #[builder(pattern = "owned", default)]
 pub struct EventDevConfig {
     dequeue_timeout: u32,
@@ -60,7 +71,27 @@ pub struct EventDevConfig {
     num_single_link_port_event_queues: u8,
 }
 
-pub fn configure_eventdev_simple(
+impl Default for EventDevConfig {
+    fn default() -> Self {
+        let mut info: rte_event_dev_info = unsafe { MaybeUninit::zeroed().assume_init() };
+        unsafe {
+            rte_event_dev_info_get(0, &mut info);
+        }
+        Self {
+            dequeue_timeout: 0,
+            event_limit_amount: info.max_num_events,
+            num_event_queues: info.max_event_queues,
+            num_ports: info.max_event_ports,
+            num_event_queue_flows: info.max_event_queue_flows,
+            port_dequeue_depth: info.max_event_port_dequeue_depth as u32,
+            port_enqueue_depth: info.max_event_port_enqueue_depth,
+            event_dev_cfg: 0,
+            num_single_link_port_event_queues: 0,
+        }
+    }
+}
+
+pub fn setup_eventdev_simple(
     device_id: EventDeviceId,
     num_ports: u8,
     num_event_queues: u8,
@@ -87,6 +118,7 @@ pub fn configure_eventdev(
         event_dev_cfg: config.event_dev_cfg,
         nb_single_link_event_port_queues: config.num_single_link_port_event_queues,
     };
+    println!("Eventdev config: {config:#?}");
     let ret = unsafe { rte_event_dev_configure(device_id, &config) };
 
     if ret == 0 {
@@ -104,18 +136,19 @@ pub mod event_queue_config {
     use std::backtrace::Backtrace;
 
     use dpdk_sys::{
-        rte_event_queue_conf, rte_event_queue_setup, RTE_EVENT_QUEUE_CFG_SINGLE_LINK,
-        RTE_SCHED_TYPE_ATOMIC, RTE_SCHED_TYPE_ORDERED, RTE_SCHED_TYPE_PARALLEL,
+        rte_event_queue_conf, rte_event_queue_setup, RTE_EVENT_DEV_PRIORITY_NORMAL,
+        RTE_EVENT_QUEUE_CFG_SINGLE_LINK, RTE_SCHED_TYPE_ATOMIC, RTE_SCHED_TYPE_ORDERED,
+        RTE_SCHED_TYPE_PARALLEL,
     };
 
-    use crate::device::{eth::dev::QueueId, event::EventDeviceId};
+    use crate::device::{eth::dev::EventQueueId, event::EventDeviceId};
 
     #[derive(Debug, thiserror::Error)]
     pub enum EventDevQueueConfigError {
         #[error("Invalid config for device {device_id}, queue {queue_id}, rte_event_queue_setup returned {code}")]
         ConfigurationFailure {
             device_id: EventDeviceId,
-            queue_id: QueueId,
+            queue_id: EventQueueId,
             code: i32,
             backtrace: Backtrace,
         },
@@ -143,7 +176,7 @@ pub mod event_queue_config {
             Self {
                 config_type: EventQueueConfigType::ORDERED,
                 is_single_link: true,
-                priority: 0,
+                priority: RTE_EVENT_DEV_PRIORITY_NORMAL as u8,
             }
         }
     }
@@ -152,7 +185,7 @@ pub mod event_queue_config {
         pub fn apply_to_eventdev_queue(
             &self,
             device_id: EventDeviceId,
-            queue_id: QueueId,
+            queue_id: EventQueueId,
         ) -> Result<(), EventDevQueueConfigError> {
             let queue_conf: rte_event_queue_conf = self.into();
             let ret = unsafe { rte_event_queue_setup(device_id, queue_id as u8, &queue_conf) };
@@ -206,19 +239,15 @@ pub mod event_queue_config {
     }
 }
 pub mod event_port_config {
-    use std::backtrace::Backtrace;
+    use std::{backtrace::Backtrace, mem::MaybeUninit};
 
     use dpdk_sys::{
-        rte_event_port_conf, rte_event_port_link, rte_event_port_setup,
-        RTE_EVENT_DEV_PRIORITY_NORMAL,
+        rte_event_port_conf, rte_event_port_default_conf_get, rte_event_port_link,
+        rte_event_port_setup, EDQUOT,
     };
-    use libc::EDQUOT;
 
     use crate::{
-        device::{
-            eth::dev::{PortId, QueueId},
-            event::EventDeviceId,
-        },
+        device::event::{EventDeviceId, EventPortId},
         eal::RteErrnoValue,
     };
 
@@ -227,7 +256,7 @@ pub mod event_port_config {
         #[error("Application tried to link port {port_id} on device {device_id} configured with RTE_EVENT_QUEUE_CFG_SINGLE_LINK to more than one event ports")]
         TooManyLinksToQueue {
             device_id: EventDeviceId,
-            port_id: PortId,
+            port_id: EventPortId,
             backtrace: Backtrace,
         },
         #[error(
@@ -235,7 +264,7 @@ pub mod event_port_config {
         )]
         GenericPortConfigError {
             device_id: EventDeviceId,
-            port_id: PortId,
+            port_id: EventPortId,
             error_code: i32,
             backtrace: Backtrace,
         },
@@ -244,26 +273,28 @@ pub mod event_port_config {
         )]
         InvalidLinkParameters {
             device_id: EventDeviceId,
-            port_id: PortId,
+            port_id: EventPortId,
             num_linked: u32,
             backtrace: Backtrace,
         },
     }
 
     pub struct EventPortConfig {
-        new_event_threshold: i32,
-        dequeue_depth: u16,
-        enqueue_depth: u16,
-        event_port_cfg: u32,
+        pub new_event_threshold: i32,
+        pub dequeue_depth: u16,
+        pub enqueue_depth: u16,
+        pub event_port_cfg: u32,
     }
 
     impl Default for EventPortConfig {
         fn default() -> Self {
+            let mut default_conf = unsafe { MaybeUninit::zeroed().assume_init() };
+            unsafe { rte_event_port_default_conf_get(0, 0, &mut default_conf) };
             Self {
-                new_event_threshold: 4096,
-                dequeue_depth: 128,
-                enqueue_depth: 128,
-                event_port_cfg: 0,
+                new_event_threshold: default_conf.new_event_threshold,
+                dequeue_depth: default_conf.dequeue_depth,
+                enqueue_depth: default_conf.enqueue_depth,
+                event_port_cfg: default_conf.event_port_cfg,
             }
         }
     }
@@ -272,11 +303,11 @@ pub mod event_port_config {
         pub fn setup_port(
             &self,
             device_id: EventDeviceId,
-            port_id: PortId,
+            port_id: EventPortId,
         ) -> Result<(), EventPortConfigError> {
             let config: rte_event_port_conf = self.into();
             let ret = unsafe { rte_event_port_setup(device_id as u8, port_id as u8, &config) };
-            if ret == -1 * EDQUOT {
+            if ret == -1 * EDQUOT as i32 {
                 Err(EventPortConfigError::TooManyLinksToQueue {
                     device_id,
                     port_id,
@@ -291,6 +322,17 @@ pub mod event_port_config {
                 })
             } else {
                 Ok(())
+            }
+        }
+
+        pub fn default_for_port(dev_id: EventDeviceId, port_id: EventPortId) -> EventPortConfig {
+            let mut default_conf = unsafe { MaybeUninit::zeroed().assume_init() };
+            unsafe { rte_event_port_default_conf_get(dev_id, port_id as u8, &mut default_conf) };
+            Self {
+                new_event_threshold: default_conf.new_event_threshold,
+                dequeue_depth: default_conf.dequeue_depth,
+                enqueue_depth: default_conf.enqueue_depth,
+                event_port_cfg: 0,
             }
         }
     }
@@ -308,7 +350,7 @@ pub mod event_port_config {
 
     pub fn link_port_to_queue(
         device_id: EventDeviceId,
-        port_id: PortId,
+        port_id: EventPortId,
         queue_ids: &[u8],
     ) -> Result<(), EventPortConfigError> {
         RteErrnoValue::clear();
@@ -316,8 +358,8 @@ pub mod event_port_config {
             rte_event_port_link(
                 device_id,
                 port_id as u8,
-                &queue_ids[0] as *const u8,
-                &(RTE_EVENT_DEV_PRIORITY_NORMAL as u8),
+                queue_ids.as_ptr(),
+                std::ptr::null(),
                 queue_ids.len() as u16,
             )
         };
@@ -349,19 +391,21 @@ pub enum EventDevStartErrors {
     #[error("Not all ports were started")]
     NotAllPortsStartedError(Backtrace),
     #[error("Not all queues are linked")]
-    NotAllQueuesLinkedError(Backtrace)
+    NotAllQueuesLinkedError(Backtrace),
 }
 
-pub fn start_event_dev() -> Result<(), EventDevStartErrors> {
-    let ret = unsafe {
-        rte_event_dev_start(0)
-    };
+pub fn start_event_dev(device_id: EventDeviceId) -> Result<(), EventDevStartErrors> {
+    let ret = unsafe { rte_event_dev_start(device_id) };
     if ret == 0 {
         Ok(())
     } else if ret == -1 * ESTALE as i32 {
-        Err(EventDevStartErrors::NotAllPortsStartedError(Backtrace::capture()))
-    } else if ret == -1 * ENOLINK as i32{
-        Err(EventDevStartErrors::NotAllQueuesLinkedError(Backtrace::capture()))
+        Err(EventDevStartErrors::NotAllPortsStartedError(
+            Backtrace::capture(),
+        ))
+    } else if ret == -1 * ENOLINK as i32 {
+        Err(EventDevStartErrors::NotAllQueuesLinkedError(
+            Backtrace::capture(),
+        ))
     } else {
         panic!("Unhandled error, {ret}");
     }

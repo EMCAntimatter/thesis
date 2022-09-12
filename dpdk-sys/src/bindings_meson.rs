@@ -39018,7 +39018,7 @@ extern "C" {
         dr: *mut rte_ip_frag_death_row,
         mb: *mut rte_mbuf,
         tms: u64,
-        ip_hdr: *mut rte_ipv4_hdr,
+        ip_hdr: *const rte_ipv4_hdr,
     ) -> *mut rte_mbuf;
 }
 extern "C" {

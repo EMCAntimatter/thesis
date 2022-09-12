@@ -6,7 +6,20 @@ version = "0.1.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libc = "0.2.124"
 dpdk = { path = "../dpdk" }
+
+# C Interop helpers
+libc = "0.2.124"
+
+# Error handling
 anyhow = "1.0.58"
-# capsule = {path = "../capsule/core", features = ["full"]}
+
+# Compile-time assertions
+static_assertions = "1.1.0"
+
+# Better locking primitives
+parking_lot = {version = "0.12.1", features = ["hardware-lock-elision"]}
+
+# Packet serialization and deserialization
+serde = {version = "1.0", features = ["derive"]}
+bincode = "1.3"

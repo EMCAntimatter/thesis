@@ -2,7 +2,7 @@
 members = [
   "./dpdk-sys",
   "./dpdk",
-  "./dpdk-hello-world",
+  "./thesis",
   "./util/tailq-iterator",
 ]
 

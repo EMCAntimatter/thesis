@@ -2,7 +2,7 @@ use std::backtrace::Backtrace;
 
 use dpdk_sys::{
     rte_eth_conf, rte_eth_dev_configure, rte_eth_dev_count_avail, rte_eth_dev_socket_id,
-    rte_eth_rx_queue_setup, rte_eth_tx_queue_setup, rte_socket_id, rte_eth_dev_start,
+    rte_eth_rx_queue_setup, rte_eth_tx_queue_setup, rte_socket_id, rte_eth_dev_start, rte_mempool_create_empty, RTE_MEMPOOL_CACHE_MAX_SIZE,
 };
 
 
@@ -82,13 +82,16 @@ pub fn configure_port(
 
 pub fn setup_port_queues(
     port: EthdevPortId,
-    pool: &mut PktMbufPool,
     num_rx_queues: u16,
     num_tx_queues: u16,
     port_conf: &rte_eth_conf,
     rx_ring_size: u16,
     tx_ring_size: u16,
 ) -> Result<(), EthDriverError> {
+    let n = 2 << 20;
+    let cache_size = n.max(RTE_MEMPOOL_CACHE_MAX_SIZE);
+    let mut pool = PktMbufPool::new("rx_pkt_pool", n, cache_size)
+        .expect("Unable to create mbuf pool");
     configure_port(port, num_rx_queues, num_tx_queues, port_conf)?;
 
     let port_socket = socket_id_for_port(port).expect("Port had no socket id");

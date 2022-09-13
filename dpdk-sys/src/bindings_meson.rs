@@ -12850,6 +12850,9 @@ pub struct rte_mbuf {
     #[doc = "< Reserved for dynamic fields."]
     pub dynfield1: [u32; 9usize],
 }
+
+unsafe impl Send for rte_mbuf {}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union rte_mbuf__bindgen_ty_1 {

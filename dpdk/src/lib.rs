@@ -2,6 +2,7 @@
 #![feature(provide_any)]
 #![feature(generic_const_exprs)]
 #![feature(allocator_api)]
+#![feature(new_uninit)]
 
 #[macro_use]
 extern crate derive_builder;
@@ -14,6 +15,7 @@ pub mod memory;
 pub mod device;
 pub mod hash;
 pub mod ip_frag;
+pub mod rss;
 
 pub mod raw {
     pub use dpdk_sys::*;

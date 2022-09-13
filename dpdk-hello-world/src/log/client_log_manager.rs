@@ -38,7 +38,7 @@ impl ClientLogManager {
         let length = dequeue_events(EVENTDEV_DEVICE_ID, self.queue_id as u8, &mut self.event_storage, 100) as usize;
         for i in 0..length {
             let event = self.event_storage[i];
-            println!("{event:#?}")
+            // println!("{event:#?}")
         }
     }
 }

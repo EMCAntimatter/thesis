@@ -1,0 +1,10 @@
+[package]
+name = "partitioned_swiss_table"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hashbrown = {version = "0.12", features = ["inline-more", "serde", "rayon", "raw", "ahash"]}
+ahash = "0.8"

@@ -1,13 +1,12 @@
 use dpdk_sys::{
     rte_event, rte_event__bindgen_ty_1, rte_event__bindgen_ty_1__bindgen_ty_1,
-    rte_event__bindgen_ty_2, rte_event_vector, rte_mbuf,
-    RTE_EVENT_OP_FORWARD, RTE_EVENT_OP_NEW, RTE_EVENT_OP_RELEASE, RTE_EVENT_TYPE_CPU,
-    RTE_EVENT_TYPE_CPU_VECTOR, RTE_EVENT_TYPE_CRYPTODEV, RTE_EVENT_TYPE_ETHDEV,
-    RTE_EVENT_TYPE_ETHDEV_VECTOR, RTE_EVENT_TYPE_ETH_RX_ADAPTER,
-    RTE_EVENT_TYPE_ETH_RX_ADAPTER_VECTOR, RTE_EVENT_TYPE_TIMER,
-    RTE_SCHED_TYPE_ATOMIC, RTE_SCHED_TYPE_ORDERED, RTE_SCHED_TYPE_PARALLEL,
+    rte_event__bindgen_ty_2, rte_event_vector, rte_mbuf, RTE_EVENT_OP_FORWARD, RTE_EVENT_OP_NEW,
+    RTE_EVENT_OP_RELEASE, RTE_EVENT_TYPE_CPU, RTE_EVENT_TYPE_CPU_VECTOR, RTE_EVENT_TYPE_CRYPTODEV,
+    RTE_EVENT_TYPE_ETHDEV, RTE_EVENT_TYPE_ETHDEV_VECTOR, RTE_EVENT_TYPE_ETH_RX_ADAPTER,
+    RTE_EVENT_TYPE_ETH_RX_ADAPTER_VECTOR, RTE_EVENT_TYPE_TIMER, RTE_SCHED_TYPE_ATOMIC,
+    RTE_SCHED_TYPE_ORDERED, RTE_SCHED_TYPE_PARALLEL,
 };
-use num_derive::{FromPrimitive, ToPrimitive};    
+use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::ToPrimitive;
 
 #[derive(Debug, Default, Clone, Copy, ToPrimitive, FromPrimitive)]
@@ -82,9 +81,9 @@ pub struct Event {
     pub word1: EventWordOne,
 }
 
-impl Into<rte_event> for &Event {
-    fn into(self) -> rte_event {
-        let word0 = match self.word0 {
+impl From<&Event> for rte_event {
+    fn from(val: &Event) -> Self {
+        let word0 = match val.word0 {
             EventWordZero::Event(event) => rte_event__bindgen_ty_1 { event },
             EventWordZero::EventAttributes {
                 queue_id,
@@ -115,7 +114,7 @@ impl Into<rte_event> for &Event {
             }
         };
 
-        let word1 = match self.word1 {
+        let word1 = match val.word1 {
             EventWordOne::Opaque64BitValue(value) => rte_event__bindgen_ty_2 { u64_: value },
             EventWordOne::EventPtr(event_ptr) => rte_event__bindgen_ty_2 { event_ptr },
             EventWordOne::MBufPtr(mbuf) => rte_event__bindgen_ty_2 { mbuf },

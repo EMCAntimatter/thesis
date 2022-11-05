@@ -35,10 +35,7 @@ pub fn receive_burst<const NUM_PACKETS: usize>(
         queue_data_pointer_rxq_data_slice[queue_id as usize]
     };
 
-    debug_assert!(
-        queue_data != std::ptr::null_mut(),
-        "Queue data pointer was null"
-    );
+    debug_assert!(queue_data.is_null(), "Queue data pointer was null");
 
     let rx_pkt_burst = queue_data_pointer.rx_pkt_burst;
 
@@ -64,7 +61,7 @@ pub fn receive_burst<const NUM_PACKETS: usize>(
         };
         let callback_ptr = AtomicPtr::from(callback_slice[queue_id as usize]);
         let callback = callback_ptr.load(std::sync::atomic::Ordering::Relaxed);
-        if callback != std::ptr::null_mut() {
+        if callback.is_null() {
             number_received = unsafe {
                 rte_eth_call_rx_callbacks(
                     port_id,
@@ -78,5 +75,5 @@ pub fn receive_burst<const NUM_PACKETS: usize>(
         }
     }
 
-    return number_received;
+    number_received
 }

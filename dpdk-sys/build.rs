@@ -91,7 +91,7 @@ impl BindgenBuilderExtensions for bindgen::Builder {
             s = s.header(include_path.to_str().unwrap());
             include_path.pop();
         }
-        return s;
+        s
     }
 }
 
@@ -152,8 +152,8 @@ fn main() {
     link_with_dpdk();
 
     // println!(
-        // "cargo:rerun-if-changed={}/dpdk-22.03/build/lib/bindings.rs",
-        // env!("CARGO_MANIFEST_DIR")
+    // "cargo:rerun-if-changed={}/dpdk-22.03/build/lib/bindings.rs",
+    // env!("CARGO_MANIFEST_DIR")
     // );
     // use_system_deps();
     // panic!();

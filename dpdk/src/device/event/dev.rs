@@ -23,7 +23,7 @@ pub enum EventDevConfigDriverError {
         backtrace: Backtrace,
     },
     #[error("Invalid configuration")]
-    InvalidConfiguration(#[from] EventDevConfigBuilderError, Backtrace)
+    InvalidConfiguration(#[from] EventDevConfigBuilderError, Backtrace),
 }
 
 pub fn get_eventdev_info(
@@ -50,7 +50,7 @@ pub fn do_capability_setup(
     let mut capabilities = EventDevRxCapabilities::empty();
 
     for ethdev_id in iter_ports() {
-        capabilities = capabilities & (get_rx_capabilities_by_id(device_id, ethdev_id))
+        capabilities &= get_rx_capabilities_by_id(device_id, ethdev_id)
     }
     let _pipeline_rx_capabilities = capabilities | EventDevRxCapabilities::HW_PACKET_TRANSFER;
 
@@ -202,20 +202,20 @@ pub mod event_queue_config {
         }
     }
 
-    impl Into<rte_event_queue_conf> for &EventQueueConfig {
-        fn into(self) -> rte_event_queue_conf {
-            let event_queue_cfg = if self.is_single_link {
+    impl From<&EventQueueConfig> for rte_event_queue_conf {
+        fn from(val: &EventQueueConfig) -> Self {
+            let event_queue_cfg = if val.is_single_link {
                 RTE_EVENT_QUEUE_CFG_SINGLE_LINK
             } else {
                 0
             };
-            match self.config_type {
+            match val.config_type {
                 EventQueueConfigType::ORDERED => rte_event_queue_conf {
                     nb_atomic_flows: 0,
                     nb_atomic_order_sequences: 0,
                     event_queue_cfg,
                     schedule_type: RTE_SCHED_TYPE_ORDERED as u8,
-                    priority: self.priority,
+                    priority: val.priority,
                 },
                 EventQueueConfigType::ATOMIC {
                     num_flows,
@@ -225,14 +225,14 @@ pub mod event_queue_config {
                     nb_atomic_order_sequences: num_order_sequences,
                     event_queue_cfg,
                     schedule_type: RTE_SCHED_TYPE_ATOMIC as u8,
-                    priority: self.priority,
+                    priority: val.priority,
                 },
                 EventQueueConfigType::PARALLEL => rte_event_queue_conf {
                     nb_atomic_flows: 0,
                     nb_atomic_order_sequences: 0,
                     event_queue_cfg,
                     schedule_type: RTE_SCHED_TYPE_PARALLEL as u8,
-                    priority: self.priority,
+                    priority: val.priority,
                 },
             }
         }
@@ -307,7 +307,7 @@ pub mod event_port_config {
         ) -> Result<(), EventPortConfigError> {
             let config: rte_event_port_conf = self.into();
             let ret = unsafe { rte_event_port_setup(device_id as u8, port_id as u8, &config) };
-            if ret == -1 * EDQUOT as i32 {
+            if ret == -(EDQUOT as i32) {
                 Err(EventPortConfigError::TooManyLinksToQueue {
                     device_id,
                     port_id,
@@ -337,13 +337,13 @@ pub mod event_port_config {
         }
     }
 
-    impl Into<rte_event_port_conf> for &EventPortConfig {
-        fn into(self) -> rte_event_port_conf {
+    impl From<&EventPortConfig> for rte_event_port_conf {
+        fn from(val: &EventPortConfig) -> Self {
             rte_event_port_conf {
-                new_event_threshold: self.new_event_threshold,
-                dequeue_depth: self.dequeue_depth,
-                enqueue_depth: self.enqueue_depth,
-                event_port_cfg: self.event_port_cfg,
+                new_event_threshold: val.new_event_threshold,
+                dequeue_depth: val.dequeue_depth,
+                enqueue_depth: val.enqueue_depth,
+                event_port_cfg: val.event_port_cfg,
             }
         }
     }
@@ -398,11 +398,11 @@ pub fn start_event_dev(device_id: EventDeviceId) -> Result<(), EventDevStartErro
     let ret = unsafe { rte_event_dev_start(device_id) };
     if ret == 0 {
         Ok(())
-    } else if ret == -1 * ESTALE as i32 {
+    } else if ret == -(ESTALE as i32) {
         Err(EventDevStartErrors::NotAllPortsStartedError(
             Backtrace::capture(),
         ))
-    } else if ret == -1 * ENOLINK as i32 {
+    } else if ret == -(ENOLINK as i32) {
         Err(EventDevStartErrors::NotAllQueuesLinkedError(
             Backtrace::capture(),
         ))

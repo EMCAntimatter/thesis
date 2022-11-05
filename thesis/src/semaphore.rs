@@ -18,11 +18,11 @@ impl SpinSemaphore {
     pub fn take_n(&self, n: u32) -> SpinSemaphoreGuard {
         loop {
             let mut val = self.var.lock();
-            if let Some(_) = val.checked_sub(n) {
+            if val.checked_sub(n).is_some() {
                 val.sub_assign(n);
                 return SpinSemaphoreGuard {
                     count: n,
-                    semaphore: &self,
+                    semaphore: self,
                 };
             }
             drop(val);

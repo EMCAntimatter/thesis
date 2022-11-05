@@ -3,8 +3,6 @@ use dpdk_sys::rte_event_eth_tx_adapter_caps_get;
 use crate::device::{eth::dev::EthdevPortId, event::EventDeviceId};
 use bitflags::bitflags;
 
-
-
 bitflags! {
     #[repr(C)]
     pub struct EventDevTxCapabilities: u32 {
@@ -76,20 +74,25 @@ pub fn get_tx_capabilities_by_id(
         unsafe { rte_event_eth_tx_adapter_caps_get(eventdev_id, ethdev_id, &mut caps as *mut u32) };
     assert!(ret == 0, "Invalid capabilities for rx port {ethdev_id}");
 
-    return EventDevTxCapabilities::from_bits_truncate(caps);
+    EventDevTxCapabilities::from_bits_truncate(caps)
 }
 
 pub mod tx_adapter {
     use std::backtrace::Backtrace;
 
     use dpdk_sys::{
-        rte_event_eth_tx_adapter_create, rte_event_port_conf, RTE_EVENT_PORT_CFG_HINT_CONSUMER, rte_event_eth_tx_adapter_queue_add, rte_event_eth_tx_adapter_start, ENOMEM, EINVAL, rte_event_eth_tx_adapter_stop,
+        rte_event_eth_tx_adapter_create, rte_event_eth_tx_adapter_queue_add,
+        rte_event_eth_tx_adapter_start, rte_event_eth_tx_adapter_stop, rte_event_port_conf, EINVAL,
+        ENOMEM, RTE_EVENT_PORT_CFG_HINT_CONSUMER,
     };
 
-    use crate::device::{event::{
-        dev::{get_eventdev_info, EventDevConfigDriverError},
-        EventDeviceId,
-    }, eth::dev::EthdevPortId};
+    use crate::device::{
+        eth::dev::EthdevPortId,
+        event::{
+            dev::{get_eventdev_info, EventDevConfigDriverError},
+            EventDeviceId,
+        },
+    };
 
     pub type TxAdapterId = u8;
 
@@ -115,7 +118,7 @@ pub mod tx_adapter {
     }
 
     pub struct TxAdapter {
-        id: TxAdapterId
+        id: TxAdapterId,
     }
 
     impl TxAdapter {
@@ -136,31 +139,20 @@ pub mod tx_adapter {
                 rte_event_eth_tx_adapter_create(adapter_id, eventdev_id, &mut event_port_config)
             };
 
-            match (err * -1) as u32 {
+            match -err as u32 {
                 ENOMEM => Err(NewTxAdapterErrors::OOM {
                     backtrace: Backtrace::capture(),
                 }),
-                0 => Ok(TxAdapter {
-                    id: adapter_id,
-                }),
+                0 => Ok(TxAdapter { id: adapter_id }),
                 x => unimplemented!("Unknown error code {x}"),
             }
         }
 
-        pub fn add_tx_queue(
-            &mut self,
-            eth_dev_id: EthdevPortId,
-            ethdev_queue_id: i32,
-        ) {
-            let err = unsafe {
-                rte_event_eth_tx_adapter_queue_add(
-                    self.id,
-                    eth_dev_id,
-                    ethdev_queue_id,
-                )
-            };
-            match (err * -1) as u32 {
-                0 => {},
+        pub fn add_tx_queue(&mut self, eth_dev_id: EthdevPortId, ethdev_queue_id: i32) {
+            let err =
+                unsafe { rte_event_eth_tx_adapter_queue_add(self.id, eth_dev_id, ethdev_queue_id) };
+            match -err as u32 {
+                0 => {}
                 EINVAL => {
                     panic!("Check logs");
                 }
@@ -175,7 +167,7 @@ pub mod tx_adapter {
 
         pub fn start_sending_packets(self) {
             let err = unsafe { rte_event_eth_tx_adapter_start(self.id) };
-            match (err * -1) as u32 {
+            match -err as u32 {
                 0 => {}
                 EINVAL => unreachable!("Adapter ID should always be a real adapter at this point"),
                 x => unimplemented!("Unknown error code {x}"),

@@ -32,7 +32,7 @@ impl IpFragTable {
                 0,
             )
         };
-        if ptr != std::ptr::null_mut() {
+        if !ptr.is_null() {
             Some(IpFragTable { inner: ptr })
         } else {
             None
@@ -53,7 +53,7 @@ impl IpFragTable {
         }
     }
 
-    /// Returns None if not all fragments have come back yet. 
+    /// Returns None if not all fragments have come back yet.
     pub fn ipv4_reassemble_packet<'a>(
         &mut self,
         stale_entries: &mut StaleEntryBuffer,
@@ -70,12 +70,10 @@ impl IpFragTable {
                 ipv4_header,
             )
         };
-        if reassembled == std::ptr::null_mut() {
+        if reassembled.is_null() {
             None
         } else {
-            Some(
-                PktMbuf::from_mbuf(reassembled)
-            )
+            Some(PktMbuf::from_mbuf(reassembled))
         }
     }
 }
@@ -98,6 +96,12 @@ impl StaleEntryBuffer {
                 row: unsafe { MaybeUninit::zeroed().assume_init() },
             },
         }
+    }
+}
+
+impl Default for StaleEntryBuffer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

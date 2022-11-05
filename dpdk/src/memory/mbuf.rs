@@ -1,23 +1,23 @@
+use core::slice;
 use std::marker::PhantomData;
 
 use dpdk_sys::{rte_mbuf, rte_pktmbuf_alloc};
 
+use super::mempool::Mempool;
 
-use super::mempool::MbufPool;
-
-pub struct PktMbuf<'buff, T> {
+pub struct PktMbuf<'buff, T: ?Sized> {
     pub(crate) inner: *mut rte_mbuf,
-    phantom: PhantomData<&'buff T>,
+    phantom: PhantomData<&'buff mut T>,
 }
 
 impl<'buff, T> PktMbuf<'buff, T> {
     /// Returns None on allocation failure
-    pub fn new<'pool>(pool: &mut MbufPool<'pool, T>) -> Option<Self>
+    pub fn new<'pool>(pool: &mut Mempool<'pool, T>) -> Option<Self>
     where
         'buff: 'pool,
     {
         let inner: *mut rte_mbuf = unsafe { rte_pktmbuf_alloc(pool.as_mut()) };
-        if inner == std::ptr::null_mut() {
+        if inner.is_null() {
             None
         } else {
             Some(Self {
@@ -27,27 +27,46 @@ impl<'buff, T> PktMbuf<'buff, T> {
         }
     }
 
-    pub fn data<'a>(&'a self) -> &'a T {
+    pub fn data(&self) -> &T {
         unsafe {
             let addr = (*self.inner).buf_addr.add((*self.inner).data_off as usize);
             &(*(addr as *const T))
         }
     }
 
-    pub fn data_mut<'a>(&'a mut self) -> &'a mut T {
+    pub fn data_mut(&mut self) -> &mut T {
         unsafe {
             let addr = (*self.inner).buf_addr.add((*self.inner).data_off as usize);
-            & mut(*(addr as *mut T))
+            &mut (*(addr as *mut T))
         }
     }
 
-    pub(crate) fn from_mbuf(mbuf: *mut rte_mbuf) -> Self  {
-        PktMbuf { inner: mbuf, phantom: Default::default() }
+    pub fn data_as_byte_slice(&self) -> &[u8] {
+        unsafe {
+            let addr = (*self.inner).buf_addr.add((*self.inner).data_off as usize);
+            slice::from_raw_parts(addr as *mut u8, (*self.inner).data_len as usize)
+        }
+    }
+
+    pub(crate) fn from_mbuf(mbuf: *mut rte_mbuf) -> Self {
+        PktMbuf {
+            inner: mbuf,
+            phantom: Default::default(),
+        }
     }
 }
 
-impl<'buff, T> Drop for PktMbuf<'buff, T> {
+impl<'buff, T: ?Sized> Drop for PktMbuf<'buff, T> {
     fn drop(&mut self) {
         todo!()
+    }
+}
+
+impl<'buff, T: ?Sized> From<&'buff mut rte_mbuf> for PktMbuf<'buff, T> {
+    fn from(buf: &'buff mut rte_mbuf) -> Self {
+        Self {
+            inner: buf,
+            phantom: PhantomData::default(),
+        }
     }
 }

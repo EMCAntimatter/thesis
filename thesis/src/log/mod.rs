@@ -1,21 +1,9 @@
-pub mod slab_list;
+use crate::message::client_message::ClientLogMessage;
+
 pub mod client_log_manager;
+pub mod slab_list;
 
-use crate::message::{MessageTimestamp, MessageId, ClientId, ClientMessage};
-
-pub type LogKey = u32;
-pub type LogValue = u32;
-
-#[repr(C)]
-#[derive(Clone)]
-pub struct LogMessage {
-    timestamp: MessageTimestamp,
-    client_id: ClientId,
-    message_id: MessageId,
-    message: ClientMessage
-}
-
-impl LogMessage {
+impl<LogKeyType, LogValueType> ClientLogMessage<LogKeyType, LogValueType> {
     #[inline]
     pub fn tag(&self) -> u128 {
         // unsafe version
@@ -26,21 +14,21 @@ impl LogMessage {
     }
 }
 
-impl PartialEq for LogMessage {
-    fn eq(&self, other: &Self) -> bool {        
+impl<LogKeyType, LogValueType> PartialEq for ClientLogMessage<LogKeyType, LogValueType> {
+    fn eq(&self, other: &Self) -> bool {
         self.tag() == other.tag()
     }
 }
 
-impl Eq for LogMessage {}
+impl<LogKeyType, LogValueType> Eq for ClientLogMessage<LogKeyType, LogValueType> {}
 
-impl PartialOrd for LogMessage {
+impl<LogKeyType, LogValueType> PartialOrd for ClientLogMessage<LogKeyType, LogValueType> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for LogMessage {
+impl<LogKeyType, LogValueType> Ord for ClientLogMessage<LogKeyType, LogValueType> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.tag().cmp(&other.tag())
     }

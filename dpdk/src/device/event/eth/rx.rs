@@ -1,8 +1,8 @@
-use crate::device::{event::EventDeviceId, eth::dev::EthdevPortId};
+use crate::device::{eth::dev::EthdevPortId, event::EventDeviceId};
 use bitflags::bitflags;
 use dpdk_sys::rte_event_eth_rx_adapter_caps_get;
 
-bitflags!{
+bitflags! {
     #[repr(C)]
     pub struct EventDevRxCapabilities: u32 {
         /// This flag is sent when the packet transfer mechanism is in HW.
@@ -31,26 +31,23 @@ pub fn get_rx_capabilities_by_id(
         unsafe { rte_event_eth_rx_adapter_caps_get(eventdev_id, ethdev_id, &mut caps as *mut u32) };
     assert!(ret == 0, "Invalid capabilities for rx port {ethdev_id}");
 
-    return EventDevRxCapabilities::from_bits_truncate(caps);
+    EventDevRxCapabilities::from_bits_truncate(caps)
 }
 
 pub mod rx_adapter {
     use std::backtrace::Backtrace;
 
     use dpdk_sys::{
-        rte_event_eth_rx_adapter_create,
-        rte_event_eth_rx_adapter_queue_add, rte_event_eth_rx_adapter_queue_conf,
-        rte_event_eth_rx_adapter_start, rte_event_port_conf, rte_mempool,
-        EINVAL, EIO, ENOMEM, RTE_EVENT_PORT_CFG_HINT_PRODUCER, rte_event_eth_rx_adapter_stop,
+        rte_event_eth_rx_adapter_create, rte_event_eth_rx_adapter_queue_add,
+        rte_event_eth_rx_adapter_queue_conf, rte_event_eth_rx_adapter_start,
+        rte_event_eth_rx_adapter_stop, rte_event_port_conf, rte_mempool, EINVAL, EIO, ENOMEM,
+        RTE_EVENT_PORT_CFG_HINT_PRODUCER,
     };
-    
 
     use crate::device::{
         eth::dev::EthdevPortId,
         event::{
-            dev::{
-                get_eventdev_info, EventDevConfigDriverError,
-            },
+            dev::{get_eventdev_info, EventDevConfigDriverError},
             event::Event,
             EventDeviceId,
         },
@@ -85,19 +82,19 @@ pub mod rx_adapter {
         pub extensions: RxAdapterQueueConfigExtensions,
     }
 
-    impl Into<rte_event_eth_rx_adapter_queue_conf> for RxAdapterQueueConfig {
-        fn into(self) -> rte_event_eth_rx_adapter_queue_conf {
+    impl From<RxAdapterQueueConfig> for rte_event_eth_rx_adapter_queue_conf {
+        fn from(val: RxAdapterQueueConfig) -> Self {
             let conf = rte_event_eth_rx_adapter_queue_conf {
-                rx_queue_flags: self.rx_queue_flags,
-                servicing_weight: self.servicing_weight,
-                ev: (&self.event).into(),
+                rx_queue_flags: val.rx_queue_flags,
+                servicing_weight: val.servicing_weight,
+                ev: (&val.event).into(),
                 vector_sz: 0,
                 vector_timeout_ns: 0,
                 vector_mp: std::ptr::null_mut(),
-                event_buf_size: self.event_buf_size,
+                event_buf_size: val.event_buf_size,
             };
 
-            match self.extensions {
+            match val.extensions {
                 RxAdapterQueueConfigExtensions::None => conf,
                 RxAdapterQueueConfigExtensions::Vector {
                     vector_size,
@@ -105,7 +102,7 @@ pub mod rx_adapter {
                     vector_mempool,
                 } => rte_event_eth_rx_adapter_queue_conf {
                     vector_sz: vector_size,
-                    vector_timeout_ns: vector_timeout_ns,
+                    vector_timeout_ns,
                     vector_mp: vector_mempool,
                     ..conf
                 },
@@ -149,7 +146,7 @@ pub mod rx_adapter {
                 rte_event_eth_rx_adapter_create(adapter_id, ethdev_id as u8, &mut event_port_config)
             };
 
-            match (err * -1) as u32 {
+            match -err as u32 {
                 EINVAL => Err(NewRxAdapterErrors::InvalidEtherDevice {
                     ethdev_id: ethdev_id as u8,
                     backtrace: Backtrace::capture(),
@@ -173,7 +170,6 @@ pub mod rx_adapter {
         ) -> Result<(), AddQueueToRxAdapterErrors> {
             let config = &queue_config.into();
             let err = unsafe {
-                
                 rte_event_eth_rx_adapter_queue_add(
                     self.adapter_id,
                     self.ether_device_id,
@@ -181,7 +177,7 @@ pub mod rx_adapter {
                     config,
                 )
             };
-            match (err * -1) as u32 {
+            match -err as u32 {
                 0 => Ok(()),
                 EIO => Err(AddQueueToRxAdapterErrors::ConfigurationAndRestartError {
                     adapter_id: self.adapter_id,
@@ -201,7 +197,7 @@ pub mod rx_adapter {
 
         pub fn start_forwarding_packets(self) {
             let err = unsafe { rte_event_eth_rx_adapter_start(self.adapter_id) };
-            match (err * -1) as u32 {
+            match -err as u32 {
                 0 => {}
                 EINVAL => unreachable!("Adapter ID should always be a real adapter at this point"),
                 x => unimplemented!("Unknown error code {x}"),

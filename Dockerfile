@@ -41,7 +41,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 		set -eux; \
         rustup install nightly ; \
         rustup default nightly ; \
-        cargo install bindgen
+        cargo install bindgen cargo-fuzz
 
 # build rust
 WORKDIR /rust

@@ -27,7 +27,8 @@
         };
         toolchain = (pkgs.rustChannelOf {
           rustToolchain = ./rust-toolchain;
-          sha256 = "sha256-Rwm8wsq1A4MwV0y+TfBDAlpxipPTce/RaMiOxAKdiPs=";
+          # sha256 = "sha256-Rwm8wsq1A4MwV0y+TfBDAlpxipPTce/RaMiOxAKdiPs=";
+          sha256 = "sha256-2ScxT2W4bH3TwXImNaGSJi+EajTYYkaeU5nBhYMYac4=";
           #        ^ After you run `nix build`, replace this with the actual
           #          hash from the error message
         }).rust;
@@ -70,7 +71,7 @@
 
         devShell = with pkgs; mkShell {
           buildInputs = [ 
-            cargo rustc rustfmt pre-commit rustPackages.clippy dpdk pkg-config bash lldb
+            cargo rustc rustfmt pre-commit rustPackages.clippy dpdk pkg-config bash lldb valgrind
            ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
         };       

@@ -1,3 +1,7 @@
+#![allow(clippy::useless_transmute)]
+#![allow(clippy::all)]
+#![allow(clippy::pedantic)]
+
 use crate::{
     bindings_meson::{__BindgenBitfieldUnit, rte_get_next_lcore, RTE_MAX_LCORE},
     rte_mbuf, rte_mempool,
@@ -322,6 +326,9 @@ extern "C" {
 
 extern "C" {
     pub fn rte_pktmbuf_alloc(mp: *mut rte_mempool) -> *mut rte_mbuf;
-    pub fn rte_pktmbuf_alloc_bulk(mp: *mut rte_mempool, mbufs: *mut *mut rte_mbuf, count: u32) -> *mut rte_mbuf;
+    pub fn rte_pktmbuf_alloc_bulk(
+        mp: *mut rte_mempool,
+        mbufs: *mut *mut rte_mbuf,
+        count: u32,
+    ) -> *mut rte_mbuf;
 }
-

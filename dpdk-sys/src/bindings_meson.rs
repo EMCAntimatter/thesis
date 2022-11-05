@@ -1,6 +1,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
+#![allow(clippy::all)]
 
 use crate::replacements::*;
 
@@ -7317,54 +7318,54 @@ extern "C" {
     pub fn rte_eal_iopl_init() -> ::std::os::raw::c_int;
 }
 extern "C" {
-    #[doc = " Initialize the Environment Abstraction Layer (EAL)."]
-    #[doc = ""]
-    #[doc = " This function is to be executed on the MAIN lcore only, as soon"]
-    #[doc = " as possible in the application's main() function."]
-    #[doc = " It puts the WORKER lcores in the WAIT state."]
-    #[doc = ""]
-    #[doc = " @param argc"]
-    #[doc = "   A non-negative value.  If it is greater than 0, the array members"]
-    #[doc = "   for argv[0] through argv[argc] (non-inclusive) shall contain pointers"]
-    #[doc = "   to strings."]
-    #[doc = " @param argv"]
-    #[doc = "   An array of strings.  The contents of the array, as well as the strings"]
-    #[doc = "   which are pointed to by the array, may be modified by this function."]
-    #[doc = " @return"]
-    #[doc = "   - On success, the number of parsed arguments, which is greater or"]
-    #[doc = "     equal to zero. After the call to rte_eal_init(),"]
-    #[doc = "     all arguments argv[x] with x < ret may have been modified by this"]
-    #[doc = "     function call and should not be further interpreted by the"]
-    #[doc = "     application.  The EAL does not take any ownership of the memory used"]
-    #[doc = "     for either the argv array, or its members."]
-    #[doc = "   - On failure, -1 and rte_errno is set to a value indicating the cause"]
-    #[doc = "     for failure.  In some instances, the application will need to be"]
-    #[doc = "     restarted as part of clearing the issue."]
-    #[doc = ""]
-    #[doc = "   Error codes returned via rte_errno:"]
-    #[doc = "     EACCES indicates a permissions issue."]
-    #[doc = ""]
-    #[doc = "     EAGAIN indicates either a bus or system resource was not available,"]
-    #[doc = "            setup may be attempted again."]
-    #[doc = ""]
-    #[doc = "     EALREADY indicates that the rte_eal_init function has already been"]
-    #[doc = "              called, and cannot be called again."]
-    #[doc = ""]
-    #[doc = "     EFAULT indicates the tailq configuration name was not found in"]
-    #[doc = "            memory configuration."]
-    #[doc = ""]
-    #[doc = "     EINVAL indicates invalid parameters were passed as argv/argc."]
-    #[doc = ""]
-    #[doc = "     ENOMEM indicates failure likely caused by an out-of-memory condition."]
-    #[doc = ""]
-    #[doc = "     ENODEV indicates memory setup issues."]
-    #[doc = ""]
-    #[doc = "     ENOTSUP indicates that the EAL cannot initialize on this system."]
-    #[doc = ""]
-    #[doc = "     EPROTO indicates that the PCI bus is either not present, or is not"]
-    #[doc = "            readable by the eal."]
-    #[doc = ""]
-    #[doc = "     ENOEXEC indicates that a service core failed to launch successfully."]
+    // Initialize the Environment Abstraction Layer (EAL).
+    //
+    // This function is to be executed on the MAIN lcore only, as soon
+    // as possible in the application's main() function.
+    // It puts the WORKER lcores in the WAIT state.
+    //
+    // @param argc
+    //   A non-negative value.  If it is greater than 0, the array members
+    //   for argv[0] through argv[argc] (non-inclusive) shall contain pointers
+    //   to strings.
+    // @param argv
+    //   An array of strings.  The contents of the array, as well as the strings
+    //   which are pointed to by the array, may be modified by this function.
+    // @return
+    //   - On success, the number of parsed arguments, which is greater or
+    //     equal to zero. After the call to rte_eal_init(),
+    //     all arguments argv[x] with x < ret may have been modified by this
+    //     function call and should not be further interpreted by the
+    //     application.  The EAL does not take any ownership of the memory used
+    //     for either the argv array, or its members.
+    //   - On failure, -1 and rte_errno is set to a value indicating the cause
+    //     for failure.  In some instances, the application will need to be
+    //     restarted as part of clearing the issue.
+    //
+    //   Error codes returned via rte_errno:
+    //     EACCES indicates a permissions issue.
+    //
+    //     EAGAIN indicates either a bus or system resource was not available,
+    //            setup may be attempted again.
+    //
+    //     EALREADY indicates that the rte_eal_init function has already been
+    //              called, and cannot be called again.
+    //
+    //     EFAULT indicates the tailq configuration name was not found in
+    //            memory configuration.
+    //
+    //     EINVAL indicates invalid parameters were passed as argv/argc.
+    //
+    //     ENOMEM indicates failure likely caused by an out-of-memory condition.
+    //
+    //     ENODEV indicates memory setup issues.
+    //
+    //     ENOTSUP indicates that the EAL cannot initialize on this system.
+    //
+    //     EPROTO indicates that the PCI bus is either not present, or is not
+    //            readable by the eal.
+    //
+    //     ENOEXEC indicates that a service core failed to launch successfully.
     pub fn rte_eal_init(
         argc: ::std::os::raw::c_int,
         argv: *mut *mut ::std::os::raw::c_char,
@@ -16383,73 +16384,71 @@ pub union rte_devargs__bindgen_ty_2 {
     pub drv_str: *const ::std::os::raw::c_char,
 }
 extern "C" {
-    #[doc = " Parse a device string."]
-    #[doc = ""]
-    #[doc = " Verify that a bus is capable of handling the device passed"]
-    #[doc = " in argument. Store which bus will handle the device, its name"]
-    #[doc = " and the eventual device parameters."]
-    #[doc = ""]
-    #[doc = " The syntax is:"]
-    #[doc = ""]
-    #[doc = "     bus:device_identifier,arg1=val1,arg2=val2"]
-    #[doc = ""]
-    #[doc = " where \"bus:\" is the bus name followed by any character separator."]
-    #[doc = " The bus name is optional. If no bus name is specified, each bus"]
-    #[doc = " will attempt to recognize the device identifier. The first one"]
-    #[doc = " to succeed will be used."]
-    #[doc = ""]
-    #[doc = " Examples:"]
-    #[doc = ""]
-    #[doc = "     pci:0000:05.00.0,arg=val"]
-    #[doc = "     05.00.0,arg=val"]
-    #[doc = "     vdev:net_ring0"]
-    #[doc = ""]
-    #[doc = " @param da"]
-    #[doc = "   The devargs structure holding the device information."]
-    #[doc = ""]
-    #[doc = " @param dev"]
-    #[doc = "   String describing a device."]
-    #[doc = ""]
-    #[doc = " @return"]
-    #[doc = "   - 0 on success."]
-    #[doc = "   - Negative errno on error."]
+    // Parse a device string.
+    //
+    // Verify that a bus is capable of handling the device passed
+    // in argument. Store which bus will handle the device, its name
+    // and the eventual device parameters.
+    //
+    // The syntax is: "bus:device_identifier,arg1=val1,arg2=val2"
+    //
+    // where "bus:" is the bus name followed by any character separator.
+    // The bus name is optional. If no bus name is specified, each bus
+    // will attempt to recognize the device identifier. The first one
+    // to succeed will be used.
+    //
+    // Examples:
+    //
+    //  pci:0000:05.00.0,arg=val
+    //  05.00.0,arg=val
+    //  vdev:net_ring0
+    //
+    // @param da
+    //   The devargs structure holding the device information.
+    //
+    // @param dev
+    //   String describing a device.
+    //
+    // @return
+    //   - 0 on success.
+    //   - Negative errno on error.
     pub fn rte_devargs_parse(
         da: *mut rte_devargs,
         dev: *const ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
-    #[doc = " Parse a device string."]
-    #[doc = ""]
-    #[doc = " Verify that a bus is capable of handling the device passed"]
-    #[doc = " in argument. Store which bus will handle the device, its name"]
-    #[doc = " and the eventual device parameters."]
-    #[doc = ""]
-    #[doc = " The device string is built with a printf-like syntax."]
-    #[doc = ""]
-    #[doc = " The syntax is:"]
-    #[doc = ""]
-    #[doc = "     bus:device_identifier,arg1=val1,arg2=val2"]
-    #[doc = ""]
-    #[doc = " where \"bus:\" is the bus name followed by any character separator."]
-    #[doc = " The bus name is optional. If no bus name is specified, each bus"]
-    #[doc = " will attempt to recognize the device identifier. The first one"]
-    #[doc = " to succeed will be used."]
-    #[doc = ""]
-    #[doc = " Examples:"]
-    #[doc = ""]
-    #[doc = "     pci:0000:05.00.0,arg=val"]
-    #[doc = "     05.00.0,arg=val"]
-    #[doc = "     vdev:net_ring0"]
-    #[doc = ""]
-    #[doc = " @param da"]
-    #[doc = "   The devargs structure holding the device information."]
-    #[doc = " @param format"]
-    #[doc = "   Format string describing a device."]
-    #[doc = ""]
-    #[doc = " @return"]
-    #[doc = "   - 0 on success."]
-    #[doc = "   - Negative errno on error."]
+    // Parse a device string.
+    //
+    // Verify that a bus is capable of handling the device passed
+    // in argument. Store which bus will handle the device, its name
+    // and the eventual device parameters.
+    //
+    // The device string is built with a printf-like syntax.
+    //
+    // The syntax is:
+    //
+    //     bus:device_identifier,arg1=val1,arg2=val2
+    //
+    // where \"bus:\" is the bus name followed by any character separator.
+    // The bus name is optional. If no bus name is specified, each bus
+    // will attempt to recognize the device identifier. The first one
+    // to succeed will be used.
+    //
+    // Examples:
+    //
+    //     pci:0000:05.00.0,arg=val
+    //     05.00.0,arg=val
+    //     vdev:net_ring0
+    //
+    // @param da
+    //   The devargs structure holding the device information.
+    // @param format
+    //   Format string describing a device.
+    //
+    // @return
+    //   - 0 on success.
+    //   - Negative errno on error.
     pub fn rte_devargs_parsef(
         da: *mut rte_devargs,
         format: *const ::std::os::raw::c_char,

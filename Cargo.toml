@@ -3,11 +3,26 @@ members = [
   "./dpdk-sys",
   "./dpdk",
   "./thesis",
+  "./thesis-bin",
   "./util/tailq-iterator",
+  "./util/slab-list",
+  "./util/partitioned_swiss_table",
 ]
+
+[workspace.dependencies]
+# Packet serialization and deserialization
+serde = {version = "1.0", features = ["derive"]}
 
 [profile.release]
 codegen-units = 1
 lto = true
 overflow-checks = false
 opt-level = 3
+debug = true
+
+[profile.bench]
+codegen-units = 1
+lto = true
+overflow-checks = false
+opt-level = 3
+debug = true

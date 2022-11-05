@@ -1,0 +1,39 @@
+[package]
+name = "thesis-bin"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+thesis = {path = "../thesis"}
+partitioned_swiss_table = { path = "../util/partitioned_swiss_table" }
+
+# Error handling
+anyhow = "1.0.58"
+
+# Helper functions for iterators
+itertools = "0.10"
+
+# Packet serialization and deserialization
+serde = {version = "1.0", features = ["derive", "alloc"]}
+serde_bytes = {version = "0.11"}
+
+# Fuzzing
+arbitrary = { version = "1", features = ["derive"] }
+
+# ITC
+cueue = "0.3.1"
+
+# State Store Candidates
+hashbrown = {version = "0.12", features = ["serde", "nightly"]}
+dashmap = {version = "5.4.0", features = ["serde"]}
+ahash = "0.8"
+
+
+rand = "0.8"
+chrono = "0.4"
+
+[[bin]]
+name = "bench"
+path = "src/bench.rs"

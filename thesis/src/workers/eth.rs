@@ -1,32 +1,32 @@
-use std::mem::MaybeUninit;
-
 use dpdk::{
     memory::allocator::{DPDKAllocator, DPDK_ALLOCATOR},
     raw::rte_mbuf,
 };
-use crossbeam_channel::{Receiver, Sender};
 
-use crate::{swap_with_uninit, ETHDEV_PORT_ID, ETHDEV_QUEUE_ID};
 
-use super::circular_buffer::RingBufferInterface;
+use crate::{ETHDEV_PORT_ID, ETHDEV_QUEUE_ID};
 
-pub fn read_packets_from_nic_port_0_into_ring<const SIZE: usize>(
-    output_ring: RingBufferInterface<SIZE, &mut rte_mbuf>,
-) {
-    let mut buffer = unsafe {
-        Box::<[&mut rte_mbuf; SIZE], DPDKAllocator>::new_uninit_in(DPDK_ALLOCATOR).assume_init()
-    };
-    loop {
-        let count = dpdk::device::eth::rx::receive_burst(0, 0, buffer.as_mut()) as usize;
-        buffer.iter_mut().take(count).for_each(|i| {
-            let reference = swap_with_uninit!(i);
-            output_ring.write_next_blocking(reference);
-        });
-    }
-}
+use super::pipeline::{SpscConsumerChannelHandle, SpscProducerChannelHandle};
+
+// use super::circular_buffer::RingBufferInterface;
+
+// pub fn read_packets_from_nic_port_0_into_ring<const SIZE: usize>(
+//     output_ring: RingBufferInterface<SIZE, &mut rte_mbuf>,
+// ) {
+//     let mut buffer = unsafe {
+//         Box::<[&mut rte_mbuf; SIZE], DPDKAllocator>::new_uninit_in(DPDK_ALLOCATOR).assume_init()
+//     };
+//     loop {
+//         let count = dpdk::device::eth::rx::receive_burst(0, 0, buffer.as_mut()) as usize;
+//         buffer.iter_mut().take(count).for_each(|i| {
+//             let reference = swap_with_uninit!(i);
+//             output_ring.write_next_blocking(reference);
+//         });
+//     }
+// }
 
 pub fn read_packets_from_nic_port_0_into_channel<const SIZE: usize>(
-    output_channel: Sender<&'static mut rte_mbuf>,
+    mut output_channel: SpscProducerChannelHandle<&'static mut rte_mbuf>,
 ) {
     let mut buffer = unsafe {
         Box::<[&mut rte_mbuf; SIZE], DPDKAllocator>::new_uninit_in(DPDK_ALLOCATOR).assume_init()
@@ -35,39 +35,49 @@ pub fn read_packets_from_nic_port_0_into_channel<const SIZE: usize>(
         let count =
             dpdk::device::eth::rx::receive_burst(ETHDEV_PORT_ID, ETHDEV_QUEUE_ID, buffer.as_mut())
                 as usize;
-        for i in 0..count {
-            output_channel.send(swap_with_uninit!(unsafe { buffer.get_unchecked_mut(i) })).unwrap();
+        let mut written_to_channel = 0;
+        while written_to_channel < count {
+            let remaining = count - written_to_channel;
+            let to_write = output_channel.slots().min(remaining);
+            let mut chunk = output_channel.write_chunk_uninit(to_write).unwrap();
+            let (first, second) = chunk.as_mut_slices();
+            written_to_channel += unsafe {
+                // Fill first
+                let first_from_ptr = buffer.as_ptr().add(written_to_channel);
+                let first_to_ptr = std::mem::transmute(first.as_mut_ptr());
+                std::ptr::copy_nonoverlapping(first_from_ptr, first_to_ptr, first.len());
+                let second_from_ptr = first_from_ptr.add(first.len());
+                let second_to_ptr = std::mem::transmute(first.as_mut_ptr());
+                std::ptr::copy_nonoverlapping(second_from_ptr, second_to_ptr, second.len());
+
+                let written = first.len() + second.len();
+                chunk.commit(written);
+                written
+            };
         }
     }
 }
 
-pub fn write_packets_to_nic_port_0<const SIZE: usize>(
-    input_channel: Receiver<&'static mut rte_mbuf>,
-) {
-    let mut buffer = unsafe {
-        Box::<[&mut rte_mbuf; SIZE], DPDKAllocator>::new_uninit_in(DPDK_ALLOCATOR).assume_init()
-    };
-    let mut count: u16 = 0;
+pub fn write_packets_to_nic_port_0(
+    mut input_channel: SpscConsumerChannelHandle<&'static mut rte_mbuf>,
+) -> Result<(), anyhow::Error> {
     loop {
-        let mut iter = input_channel.try_iter();
-        while let Some(val) = iter.next() {
-            if (count as usize) < SIZE {
-                buffer[count as usize] = val;
-                count += 1;
-            } else {
-                while count != 0 {
-                    let sent = dpdk::device::eth::tx::send_burst(
-                        ETHDEV_PORT_ID,
-                        ETHDEV_QUEUE_ID,
-                        &mut buffer,
-                        count as u16,
-                    );
-                    debug_assert!(
-                        count >= sent,
-                        "More packets sent than were requested to be sent"
-                    );
-                    count -= sent;
-                }
+        let num_to_read = input_channel.slots().min(u16::MAX as usize);
+        let chunk = input_channel.read_chunk(num_to_read).unwrap();
+        let (first, second) = chunk.as_slices();
+
+        for chunk in [first, second] {
+            let mut buff = chunk;
+            let mut sent = 0;
+            while sent < chunk.len() {
+                let num_tx: usize = dpdk::device::eth::tx::send_burst(
+                    ETHDEV_PORT_ID,
+                    ETHDEV_QUEUE_ID,
+                    buff,
+                    buff.len().min(u16::MAX as usize) as u16,
+                ) as usize;
+                buff = &buff[num_tx..buff.len()];
+                sent += num_tx;
             }
         }
     }

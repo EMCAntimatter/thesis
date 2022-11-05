@@ -1,52 +1,51 @@
-pub mod circular_buffer;
 pub mod eth;
+pub mod pipeline;
 
-use crate::TX_ADAPTER_INPUT_QUEUE_ID;
-
-use crossbeam_channel::{Receiver, Sender};
 use dpdk::{
     self,
     device::event::event_interface::{dequeue_events, enqueue_new_events},
     eal::current_lcore_id,
     raw::{rte_event, rte_mbuf, RTE_EVENT_OP_RELEASE},
 };
+
 use libc::{c_int, c_void};
 use parking_lot::{Mutex, Once};
 
 use std::{
-    cell::OnceCell,
     mem::MaybeUninit,
     sync::atomic::{fence, Ordering},
 };
 
-use crate::{EVENTDEV_DEVICE_ID, EVENT_HANDLER_PORT_ID, RUNNING, TERMINATE};
+use crate::{
+    EVENTDEV_DEVICE_ID, EVENT_HANDLER_PORT_ID, RUNNING, TERMINATE, TX_ADAPTER_INPUT_QUEUE_ID,
+};
 
 use self::{
-    circular_buffer::{RingBuffer, RingBufferInterface},
     eth::{read_packets_from_nic_port_0_into_channel, write_packets_to_nic_port_0},
+    pipeline::{SpscConsumerChannelHandle, SpscProducerChannelHandle},
 };
 
 const RX_RING_BUFFER_SIZE: usize = 1024;
 
-type RxRingBufferType<'a> = RingBufferInterface<RX_RING_BUFFER_SIZE, &'a mut rte_mbuf>;
-type TxRingBufferType<'a> = RingBufferInterface<RX_RING_BUFFER_SIZE, &'a mut rte_mbuf>;
+// type RxRingBufferType<'a> = RingBufferInterface<RX_RING_BUFFER_SIZE, &'a mut rte_mbuf>;
+// type TxRingBufferType<'a> = RingBufferInterface<RX_RING_BUFFER_SIZE, &'a mut rte_mbuf>;
 
-pub(crate) const RX_RING_BUFFER: OnceCell<RxRingBufferType> = OnceCell::new();
-pub(crate) const TX_RING_BUFFER: OnceCell<TxRingBufferType> = OnceCell::new();
+// pub(crate) const RX_RING_BUFFER: OnceCell<RxRingBufferType> = OnceCell::new();
+// pub(crate) const TX_RING_BUFFER: OnceCell<TxRingBufferType> = OnceCell::new();
 
-fn buffer_init_helper() {
-    RX_RING_BUFFER.get_or_init(|| RingBuffer::new());
-    TX_RING_BUFFER.get_or_init(|| RingBuffer::new());
-}
+// fn buffer_init_helper() {
+//     RX_RING_BUFFER.get_or_init(|| RingBuffer::new());
+//     TX_RING_BUFFER.get_or_init(|| RingBuffer::new());
+// }
 
 const BUFFER_SIZE: usize = 1024;
-const IO_GUARD: Once = Once::new();
-static INPUT: Mutex<Option<Sender<&mut rte_mbuf>>> = Mutex::new(None);
-static OUTPUT: Mutex<Option<Receiver<&mut rte_mbuf>>> = Mutex::new(None);
+static IO_GUARD: Once = Once::new();
+static INPUT: Mutex<Option<SpscProducerChannelHandle<&mut rte_mbuf>>> = Mutex::new(None);
+static OUTPUT: Mutex<Option<SpscConsumerChannelHandle<&mut rte_mbuf>>> = Mutex::new(None);
 
 fn channel_init_helper() {
     IO_GUARD.call_once(|| {
-        let (send, recv) = crossbeam_channel::bounded::<&mut rte_mbuf>(BUFFER_SIZE);
+        let (send, recv) = rtrb::RingBuffer::new(BUFFER_SIZE);
         let mut input_lock = INPUT.lock();
         let mut output_lock = OUTPUT.lock();
         input_lock.replace(send);
@@ -61,19 +60,25 @@ pub extern "C" fn lcore_init(_unused: *mut c_void) -> c_int {
     let lcore = current_lcore_id();
     match lcore {
         // 0 | 1 => {}
-        2 => read_packets_from_nic_port_0_into_channel::<RX_RING_BUFFER_SIZE>(
-            INPUT.lock().take().unwrap()
-        ),
-        3 => write_packets_to_nic_port_0::<RX_RING_BUFFER_SIZE>(
-            OUTPUT.lock().take().unwrap()
-        ),
+        2 => {
+            read_packets_from_nic_port_0_into_channel::<RX_RING_BUFFER_SIZE>(
+                INPUT.lock().take().unwrap(),
+            );
+        }
+        3 => {
+            write_packets_to_nic_port_0(OUTPUT.lock().take().unwrap()).unwrap();
+        }
         // 4 => handle_events(),
-        _ => println!("Extra lcore {lcore} exiting"),
+        _ => {
+            println!("Extra lcore {lcore} exiting");
+            return 0;
+        }
     }
 
-    return 0;
+    0
 }
 
+#[allow(dead_code)]
 fn handle_events() {
     RUNNING.with_guard_1(|| {
         let lcore = current_lcore_id();

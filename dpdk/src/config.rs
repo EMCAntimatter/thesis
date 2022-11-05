@@ -51,7 +51,7 @@ impl Display for VirtualDevice {
             .options
             .iter()
             .map(|(k, v)| k.to_owned() + "=" + v)
-            .fold("".to_string(), |a, b| format!("{a},{b}").to_string());
+            .fold("".to_string(), |a, b| format!("{a},{b}"));
         write!(f, "{}{}{}", self.driver, self.id, options)
     }
 }
@@ -111,7 +111,10 @@ impl DPDKConfig {
             .split_ascii_whitespace()
             .map(|arg| CString::new(arg).unwrap())
             .collect_vec();
-        let c_args = args.iter().map(|arg| arg.as_ptr() as *mut libc::c_char).collect_vec();
+        let c_args = args
+            .iter()
+            .map(|arg| arg.as_ptr() as *mut libc::c_char)
+            .collect_vec();
         // println!("{}", unsafe { dpdk_sys::per_lcore__rte_errno });
         let ret = unsafe { dpdk_sys::rte_eal_init(c_args.len() as i32, c_args.as_ptr() as *mut _) };
 
@@ -146,7 +149,7 @@ impl Display for DPDKConfig {
         let mut options: Vec<String> = vec![];
         match &self.cores {
             CoreConfig::Mask(mask) => {
-                write!(f, "{} {:x} ", "-c", mask)?;
+                write!(f, "-c {:x} ", mask)?;
             }
             CoreConfig::List(list) => {
                 let cores = list.iter().map(|c| c.to_string()).join(",");
@@ -169,7 +172,7 @@ impl Display for DPDKConfig {
                 allowed_devices,
             } => {
                 for blocked_device in blocked_devices {
-                    write!(f, "{} {} ", "-b", blocked_device)?;
+                    write!(f, "-b {} ", blocked_device)?;
                 }
 
                 for allowed_device in allowed_devices {
@@ -207,4 +210,3 @@ impl Display for DPDKConfig {
         Ok(())
     }
 }
- 

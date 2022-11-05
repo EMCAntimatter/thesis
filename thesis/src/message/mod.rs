@@ -1,32 +1,50 @@
 use serde::{Deserialize, Serialize};
 
-use crate::log::{LogKey, LogValue};
+use self::{ack::AckMessage, client_message::ClientLogMessage};
 
-pub mod message_packet;
+pub mod ack;
+pub mod client_message;
 
-pub type MessageCount = u16;
-pub type MessageTimestamp = u64;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ClientId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct MessageId(pub u32);
-
-impl MessageId {
-    pub fn next(&self) -> MessageId {
-        let (next_value, _) = self.0.overflowing_add(1);
-        MessageId(next_value)
-    }
+/// All messages in the program that can be received by the DPDK-bound ports
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum Message<LogKeyType, LogValueType> {
+    IncomingClientMessage(ClientLogMessage<LogKeyType, LogValueType>),
+    AckMessage(AckMessage<LogValueType>),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub enum ClientMessage {
-    Get {
-        key: LogKey
-    },
-    Set {
-        key: LogKey,
-        value: LogValue
+impl<LogKeyType, LogValueType> Copy for Message<LogKeyType, LogValueType>
+where
+    LogKeyType: Copy,
+    LogValueType: Copy,
+{
+}
+
+#[cfg(test)]
+mod test {
+    use super::{client_message::ClientLogMessage, Message};
+
+    #[test]
+    fn test_message_serializability() {
+        let messages: Vec<Message<&[u8], &[u8]>> = vec![
+            Message::IncomingClientMessage(ClientLogMessage {
+                client_id: super::client_message::ClientId(0),
+                message_id: super::client_message::MessageId(1),
+                operation: super::client_message::ClientMessageOperation::Put {
+                    key: b"hello",
+                    value: b"world",
+                },
+            }),
+            Message::IncomingClientMessage(ClientLogMessage {
+                client_id: super::client_message::ClientId(0),
+                message_id: super::client_message::MessageId(1),
+                operation: super::client_message::ClientMessageOperation::Put {
+                    key: b"foo",
+                    value: b"bar",
+                },
+            }),
+        ];
+
+        let bytes = bincode::serialize(&messages).unwrap();
+        let _result: Vec<Message<&[u8], &[u8]>> = bincode::deserialize(&bytes).unwrap();
     }
 }

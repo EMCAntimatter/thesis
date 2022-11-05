@@ -1,10 +1,11 @@
-use std::backtrace::Backtrace;
+use std::{backtrace::Backtrace, mem::MaybeUninit};
 
 use dpdk_sys::{
-    rte_eth_conf, rte_eth_dev_configure, rte_eth_dev_count_avail, rte_eth_dev_socket_id,
-    rte_eth_rx_queue_setup, rte_eth_tx_queue_setup, rte_socket_id, rte_eth_dev_start, rte_mempool_create_empty, RTE_MEMPOOL_CACHE_MAX_SIZE,
+    rte_eth_conf, rte_eth_dev_configure, rte_eth_dev_count_avail, rte_eth_dev_info,
+    rte_eth_dev_info_get, rte_eth_dev_socket_id, rte_eth_dev_start, rte_eth_rx_queue_setup,
+    rte_eth_tx_queue_setup, rte_socket_id, EINVAL, ENODEV, ENOTSUP, RTE_MEMPOOL_CACHE_MAX_SIZE,
 };
-
+use thiserror::Error;
 
 pub type EthdevPortId = u16;
 pub type EventQueueId = u16;
@@ -36,7 +37,7 @@ pub enum EthDriverError {
         port: EthdevPortId,
         driver_error: i32,
         backtrace: Backtrace,
-    }
+    },
 }
 
 use crate::memory::pktmbuf_pool::PktMbufPool;
@@ -62,6 +63,48 @@ pub fn socket_id_for_port(port_id: EthdevPortId) -> Option<u32> {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum EthdevPortInfoError {
+    #[error("Ethernet Device {port} does not support getting info")]
+    NoSupportedInfoError {
+        port: EthdevPortId,
+        backtrace: Backtrace,
+    },
+    #[error("Invalid port id: {port}")]
+    PortDoesNotExistError {
+        port: EthdevPortId,
+        backtrace: Backtrace,
+    },
+    #[error("Invalid parameter")]
+    InvalidParameterError {
+        port: EthdevPortId,
+        backtrace: Backtrace,
+    },
+}
+
+pub fn get_ethdev_port_info(port: EthdevPortId) -> Result<rte_eth_dev_info, EthdevPortInfoError> {
+    let mut dev_info = unsafe { MaybeUninit::zeroed().assume_init() };
+    let ret = unsafe { rte_eth_dev_info_get(port, &mut dev_info) };
+    match -ret as u32 {
+        0 => Ok(dev_info),
+        ENOTSUP => Err(EthdevPortInfoError::NoSupportedInfoError {
+            port,
+            backtrace: Backtrace::capture(),
+        }),
+        ENODEV => Err(EthdevPortInfoError::PortDoesNotExistError {
+            port,
+            backtrace: Backtrace::capture(),
+        }),
+        EINVAL => Err(EthdevPortInfoError::InvalidParameterError {
+            port,
+            backtrace: Backtrace::capture(),
+        }),
+        unknown => {
+            panic!("Unknown error code {unknown}")
+        }
+    }
+}
+
 pub fn configure_port(
     port: EthdevPortId,
     num_rx_queues: u16,
@@ -73,7 +116,7 @@ pub fn configure_port(
         Err(EthDriverError::PortConfigureError {
             port,
             driver_error: ret,
-            backtrace: Backtrace::capture()
+            backtrace: Backtrace::capture(),
         })
     } else {
         Ok(())
@@ -88,10 +131,9 @@ pub fn setup_port_queues(
     rx_ring_size: u16,
     tx_ring_size: u16,
 ) -> Result<(), EthDriverError> {
-    let n = 2 << 20;
-    let cache_size = n.max(RTE_MEMPOOL_CACHE_MAX_SIZE);
-    let mut pool = PktMbufPool::new("rx_pkt_pool", n, cache_size)
-        .expect("Unable to create mbuf pool");
+    let n = 8196;
+    let cache_size = n.min(RTE_MEMPOOL_CACHE_MAX_SIZE);
+    let mut pool = PktMbufPool::new("rx\0", n, cache_size).expect("Unable to create mbuf pool");
     configure_port(port, num_rx_queues, num_tx_queues, port_conf)?;
 
     let port_socket = socket_id_for_port(port).expect("Port had no socket id");
@@ -112,27 +154,21 @@ pub fn setup_port_queues(
                 port,
                 queue: queue_id,
                 driver_error,
-                backtrace: Backtrace::capture()
+                backtrace: Backtrace::capture(),
             });
         }
     }
 
     for queue_id in 0..num_tx_queues {
         let driver_error = unsafe {
-            rte_eth_tx_queue_setup(
-                port,
-                queue_id,
-                tx_ring_size,
-                port_socket,
-                std::ptr::null(),
-            )
+            rte_eth_tx_queue_setup(port, queue_id, tx_ring_size, port_socket, std::ptr::null())
         };
         if driver_error < 0 {
             return Err(EthDriverError::PortTxQueueStartError {
                 port,
                 queue: queue_id,
                 driver_error,
-                backtrace: Backtrace::capture()
+                backtrace: Backtrace::capture(),
             });
         }
     }
@@ -143,7 +179,11 @@ pub fn setup_port_queues(
 pub fn start_port(port: EthdevPortId) -> Result<(), EthDriverError> {
     let ret = unsafe { rte_eth_dev_start(port) };
     if ret < 0 {
-        Err(EthDriverError::PortStartError { port, driver_error: ret, backtrace: Backtrace::capture() })
+        Err(EthDriverError::PortStartError {
+            port,
+            driver_error: ret,
+            backtrace: Backtrace::capture(),
+        })
     } else {
         Ok(())
     }

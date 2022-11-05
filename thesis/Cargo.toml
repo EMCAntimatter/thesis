@@ -7,6 +7,7 @@ version = "0.1.0"
 
 [dependencies]
 dpdk = { path = "../dpdk" }
+partitioned_swiss_table = { path = "../util/partitioned_swiss_table" }
 
 # C Interop helpers
 libc = "0.2.124"
@@ -20,9 +21,61 @@ static_assertions = "1.1.0"
 # Better locking primitives
 parking_lot = {version = "0.12.1", features = ["hardware-lock-elision"]}
 
-# Packet serialization and deserialization
-serde = {version = "1.0", features = ["derive"]}
 bincode = "1.3"
 
 # Cross-thread messaging
 crossbeam-channel = "0.5.6"
+kanal = "0.1.0-pre1"
+cueue = "0.3.1"
+rtrb = "0.2.2"
+
+# Helper functions for iterators
+itertools = "0.10"
+
+# Generic over different width of numbers
+num = "0.4.0"
+
+# Bit packed storage for intervals
+bitvec = "1.0.1"
+
+# Packet serialization and deserialization
+serde = {version = "1.0", features = ["derive", "alloc"]}
+serde_bytes = {version = "0.11"}
+
+# Fuzzing
+arbitrary = { version = "1", features = ["derive"] }
+
+
+# State Store Candidates
+hashbrown = {version = "0.12.3", features = ["serde", "nightly"]}
+dashmap = {version = "5.4.0", features = ["serde"]}
+
+# Hash Algorithms
+ahash = "0.8"
+fnv = "1.0.7"
+rustc-hash = "1.1.0"
+
+# Logging 
+tracing = {version = "0.1", features = ["release_max_level_off", "max_level_trace"]}
+tracing-subscriber = {version = "0.3", features = ["fmt", "env-filter"]}
+
+[dev-dependencies]
+# Generating random bytes for Arbitrary
+rand = "0.8"
+
+# Gets rid of logging setup boilerplate for tests
+test-log = {version = "0.2.11", features = ["trace"]}
+env_logger = "0.9.1"
+log = {version = "0.4.17", features = ["release_max_level_off", "max_level_trace"]}
+tracing = {version = "0.1", features = ["log"]}
+tracing-subscriber = {version = "0.3", features = ["fmt", "env-filter"]}
+
+# Async runtime
+[dependencies.tokio]
+version = "1.21"
+features = ["full"]
+
+[features]
+default = ["virtio"]
+ena = []
+virtio = []

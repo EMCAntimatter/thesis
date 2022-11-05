@@ -1,12 +1,13 @@
 use dpdk_sys::{
-    rte_pktmbuf_pool_create, rte_mempool, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id, rte_mempool_free,
+    rte_mempool, rte_mempool_free, rte_pktmbuf_pool_create, rte_socket_id,
+    RTE_MBUF_DEFAULT_BUF_SIZE,
 };
 
 use crate::eal::RteErrnoValue;
 
 #[repr(transparent)]
 pub struct PktMbufPool {
-    pool: *mut rte_mempool
+    pool: *mut rte_mempool,
 }
 
 impl PktMbufPool {
@@ -16,25 +17,29 @@ impl PktMbufPool {
         cache_size: u32,
     ) -> Result<Self, RteErrnoValue> {
         let c_name = name.as_ptr() as *const i8;
+        assert!(name.contains('\0'));
         let pool = unsafe {
-            rte_pktmbuf_pool_create(c_name, num_elements, cache_size, 0, RTE_MBUF_DEFAULT_BUF_SIZE as u16, rte_socket_id() as i32)
+            rte_pktmbuf_pool_create(
+                c_name,
+                num_elements,
+                cache_size,
+                0,
+                RTE_MBUF_DEFAULT_BUF_SIZE as u16,
+                rte_socket_id() as i32,
+            )
         };
 
-        if pool == std::ptr::null_mut() {
+        if pool.is_null() {
             Err(RteErrnoValue::most_recent())
         } else {
-            Ok(Self {
-                pool,
-            })
+            Ok(Self { pool })
         }
     }
 }
 
 impl Drop for PktMbufPool {
     fn drop(&mut self) {
-        unsafe {
-            rte_mempool_free(self.pool)
-        }
+        unsafe { rte_mempool_free(self.pool) }
     }
 }
 

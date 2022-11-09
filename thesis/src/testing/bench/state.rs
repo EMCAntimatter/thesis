@@ -24,8 +24,8 @@ fn apply_message_to_state_n_times<LogKeyType, LogValueType>(
 mod hashtable {
     mod hashbrown {
 
-        use std::hash::Hash;
         use std::alloc::Global;
+        use std::hash::Hash;
 
         use rand::Rng;
         use test::Bencher;

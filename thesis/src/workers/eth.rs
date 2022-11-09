@@ -3,7 +3,6 @@ use dpdk::{
     raw::rte_mbuf,
 };
 
-
 use crate::{ETHDEV_PORT_ID, ETHDEV_QUEUE_ID};
 
 use super::pipeline::{SpscConsumerChannelHandle, SpscProducerChannelHandle};

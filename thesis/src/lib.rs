@@ -11,18 +11,20 @@
 // Only for Bit Flag Interval Set
 #![feature(int_roundings)]
 #![feature(array_zip)]
+#![feature(binary_heap_into_iter_sorted)]
 
 use dpdk::device::event::EventDeviceId;
 
 pub mod log;
 pub mod message;
-pub mod semaphore;
-pub mod workers;
 pub mod prefix;
-#[cfg(test)]
-pub mod testing;
+pub mod semaphore;
 pub mod state;
 pub mod sync_provider;
+#[cfg(test)]
+pub mod testing;
+pub mod workers;
+pub mod db;
 
 #[cfg(test)]
 extern crate test;
@@ -52,7 +54,7 @@ use dpdk::{
         eth::dev::{
             get_ethdev_port_info, setup_port_queues, start_port, EthdevPortId, EventQueueId,
         },
-        event::{EventPortId},
+        event::EventPortId,
     },
     raw::{
         rte_eal_cleanup, rte_eal_mp_wait_lcore, rte_eth_conf, rte_eth_rxmode, rte_trace_save,

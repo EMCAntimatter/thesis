@@ -40,7 +40,6 @@ where
 
 #[cfg(test)]
 pub mod test {
-    
 
     use crossbeam_channel::RecvError;
     use serde::{de::DeserializeOwned, Serialize};

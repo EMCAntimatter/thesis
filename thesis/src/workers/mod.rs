@@ -1,5 +1,6 @@
 pub mod eth;
 pub mod pipeline;
+pub mod order_messages;
 
 use dpdk::{
     self,

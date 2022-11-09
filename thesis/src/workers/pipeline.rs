@@ -2,7 +2,10 @@ use std::{
     alloc::Allocator,
     collections::LinkedList,
     hash::Hash,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 use bincode::Options;
@@ -95,119 +98,6 @@ where
     }
 }
 
-/// Parallel when partitioned by client ID
-#[instrument(skip(input_channel, out_channel, next_holder))]
-pub fn order_messages<LogKeyType, LogValueType>(
-    mut input_channel: SpscConsumerChannelHandle<ClientLogMessage<LogKeyType, LogValueType>>,
-    mut out_channel: SpscProducerChannelHandle<ClientLogMessage<LogKeyType, LogValueType>>,
-    next_holder: &AtomicU32,
-    client_id: ClientId,
-) -> Result<(), anyhow::Error>
-where
-    LogKeyType: Debug,
-    LogValueType: Debug,
-{
-    let mut ordering_list: LinkedList<ClientLogMessage<LogKeyType, LogValueType>> =
-        LinkedList::new();
-    loop {
-        if input_channel.is_abandoned() && input_channel.is_empty() && ordering_list.is_empty() {
-            tracing::info!("Input channel abandoned and empty, closing");
-            return Ok(()); // returning causes all of the client log message channels to be abandoned as well.
-        }
-        while out_channel.slots() == 0 {
-            if input_channel.is_abandoned() && input_channel.is_empty() {
-                tracing::info!("Input channel abandoned and empty, closing");
-                return Ok(()); // returning causes all of the client log message channels to be abandoned as well.
-            }
-        }
-        match input_channel.pop() {
-            Ok(msg) => {
-                let _msg_span =
-                    tracing::trace_span!("msg_ordering", msg_id = msg.message_id.0).entered();
-                tracing::trace!(event = "Got new message", msg = %msg);
-                let mut next = next_holder.load(Ordering::Acquire);
-                if msg.message_id.0 == next {
-                    tracing::trace!(event = "Message found to be the next");
-                    while out_channel.slots() == 0 {}
-                    ordering_list.push_front(msg);
-
-                    let mut num_to_split_off = ordering_list
-                        .iter()
-                        .take_while(|msg| {
-                            if msg.message_id.0 == next {
-                                next += 1;
-                                next_holder.fetch_add(1, Ordering::Release);
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .count();
-                    if num_to_split_off > 0 {
-                        tracing::trace!(
-                            event = "Trying to send additional messages",
-                            count = num_to_split_off
-                        );
-                        // for _ in 0..num_to_split_off {
-                        //     let item = ordering_list.pop_front().expect("Should always be fine because num_to_split_off <= ordering_list.len()");
-                        //     let mut res = Err(PushError::Full(item));
-                        //     while res.is_err() {
-                        //         match res.unwrap_err() {
-                        //             PushError::Full(item) => {
-                        //                 res = out_channel.push(item);
-                        //             }
-                        //         }
-                        //     }
-                        // }
-
-                        let new_ordering_list = ordering_list.split_off(num_to_split_off);
-                        let mut items_to_write = ordering_list;
-                        ordering_list = new_ordering_list;
-
-                        while num_to_split_off > 0 {
-                            let num_to_write_this_round =
-                                out_channel.slots().min(items_to_write.len());
-                            let output_chunk = out_channel
-                                .write_chunk_uninit(num_to_write_this_round)
-                                .unwrap();
-                            let remainder = items_to_write.split_off(num_to_write_this_round);
-                            let num_written =
-                                output_chunk.fill_from_iter(items_to_write.into_iter());
-                            items_to_write = remainder;
-                            num_to_split_off -= num_written;
-                            if num_written > 0 {
-                                tracing::trace!(
-                                    event = "Sent messages",
-                                    count = num_written,
-                                    remaining = num_to_split_off
-                                );
-                            }
-                        }
-                        // next_holder.fetch_add(num_to_split_off as u32, Ordering::Release);
-                    }
-                } else {
-                    // Unhappy path
-                    let mut cursor = ordering_list.cursor_back_mut();
-                    while let Some(cur) = cursor.current() && cur.message_id > msg.message_id {
-                        cursor.move_prev()
-                    }
-                    cursor.insert_after(msg);
-                    tracing::trace!(
-                        event = "Message was not next, adding to buffer",
-                        buffer_len = ordering_list.len()
-                    );
-                }
-            }
-            Err(_) => {
-                if input_channel.is_abandoned() && input_channel.is_empty() {
-                    tracing::info!("Input channel abandoned and empty, closing");
-                    return Ok(());
-                }
-            }
-        }
-    }
-}
-
 #[instrument(skip_all, fields(clients = ?(CLIENT_ID_OFFSET..(CLIENT_ID_OFFSET + NUM_CLIENTS))))]
 pub fn apply_messages_pipeline<
     LogKeyType,
@@ -297,8 +187,6 @@ fn apply_messages_for_client_id<
 {
     let client_id_offset = client_id - CLIENT_ID_OFFSET;
     let mut messages_to_apply = delta_prefix.states[client_id_offset].0 as usize;
-    let mut msg_id = 0;
-    let msg_id_ref = &mut msg_id;
     tracing::trace!(messages_to_apply);
     while messages_to_apply > 0 {
         let queue = &mut client_channels[client_id];
@@ -311,10 +199,6 @@ fn apply_messages_for_client_id<
         {
             // make sure everything is in order
             let (first, second) = read_chunk.as_slices();
-            for item in first.iter().chain(second) {
-                assert_eq!(*msg_id_ref, item.message_id.0);
-                *msg_id_ref += 1;
-            }
             for (a, b) in first.iter().chain(second).tuple_windows() {
                 assert_eq!(a.client_id, b.client_id);
                 assert_eq!(a.message_id.0 + 1, b.message_id.0);
@@ -382,9 +266,13 @@ mod test {
     use std::{
         alloc::Global,
         fmt::Debug,
-        sync::{atomic::AtomicU32, Arc},
+        sync::{
+            atomic::{fence, AtomicU32, Ordering},
+            Arc,
+        },
     };
 
+    use bitvec::store::BitStore;
     use hashbrown::hash_map::DefaultHashBuilder;
 
     use crate::{
@@ -395,9 +283,11 @@ mod test {
         prefix::Prefix,
         state::State,
         sync_provider::{test::TestLocalSyncProvider, SyncProvider},
-        workers::pipeline::{
-            apply_messages_pipeline, order_messages,
-            test::ordering::get_sequence_of_n_shuffled_messages,
+        workers::{
+            order_messages::order_messages,
+            pipeline::{
+                apply_messages_pipeline, test::ordering::get_sequence_of_n_shuffled_messages,
+            },
         },
     };
 
@@ -545,22 +435,28 @@ mod test {
     }
 
     pub mod ordering {
-        use std::sync::{atomic::AtomicU32, Arc};
+        use std::sync::{
+            atomic::{AtomicU32, Ordering},
+            Arc,
+        };
 
         use arbitrary::{Arbitrary, Unstructured};
+        use bitvec::store::BitStore;
         use itertools::Itertools;
         use rand::{seq::SliceRandom, Rng};
 
         use crate::{
             message::client_message::{ClientId, ClientLogMessage, MessageId},
-            workers::pipeline::order_messages,
+            workers::order_messages::order_messages,
         };
 
         pub fn get_sequence_of_n_messages<
             LogKeyType: for<'a> Arbitrary<'a> + Clone,
             LogValueType: for<'a> Arbitrary<'a> + Clone,
             const NUM_MESSAGES: usize,
-        >() -> Vec<ClientLogMessage<LogKeyType, LogValueType>> {
+        >(
+            mut msg_id: u32,
+        ) -> Vec<ClientLogMessage<LogKeyType, LogValueType>> {
             let num_bytes =
                 std::mem::size_of::<ClientLogMessage<LogKeyType, LogValueType>>() * NUM_MESSAGES;
             let mut rand = rand::thread_rng();
@@ -569,27 +465,29 @@ mod test {
                 .flat_map(u64::to_ne_bytes)
                 .collect_vec();
             let mut unstructured = Unstructured::new(&data);
-            let mut msg_id = 0;
-            let msgs: Box<[ClientLogMessage<LogKeyType, LogValueType>; NUM_MESSAGES]> =
-                unstructured.arbitrary().unwrap();
-            msgs.into_iter()
-                .map(|mut msg| {
-                    msg.client_id = ClientId(0);
-                    msg.message_id = MessageId(msg_id);
-                    msg_id += 1;
-                    msg
-                })
-                .collect_vec()
+            let mut v = Vec::with_capacity(NUM_MESSAGES);
+            (0..NUM_MESSAGES).for_each(|i| {
+                let mut msg: ClientLogMessage<LogKeyType, LogValueType> =
+                    unstructured.arbitrary().unwrap();
+                msg.client_id = ClientId(0);
+                msg.message_id = MessageId(msg_id);
+                v.push(msg);
+                msg_id += 1;
+            });
+            v
         }
 
         pub fn get_sequence_of_n_shuffled_messages<
             LogKeyType: for<'a> Arbitrary<'a> + Clone,
             LogValueType: for<'a> Arbitrary<'a> + Clone,
             const NUM_MESSAGES: usize,
-        >() -> Vec<ClientLogMessage<LogKeyType, LogValueType>> {
+        >(
+            starting_message_id: u32,
+        ) -> Vec<ClientLogMessage<LogKeyType, LogValueType>> {
             let mut random = rand::thread_rng();
-            let mut messages =
-                get_sequence_of_n_messages::<LogKeyType, LogValueType, NUM_MESSAGES>();
+            let mut messages = get_sequence_of_n_messages::<LogKeyType, LogValueType, NUM_MESSAGES>(
+                starting_message_id,
+            );
             messages.shuffle(&mut random);
             messages
         }
@@ -600,11 +498,11 @@ mod test {
             let (mut pipeline_write_handle, input_channel) = rtrb::RingBuffer::new(NUM_MESSAGES);
             let (output_channel, mut pipeline_read_handle) = rtrb::RingBuffer::new(NUM_MESSAGES);
             let next_holder = Arc::new(AtomicU32::new(0));
-            let next_holder_ref = next_holder;
+            let next_holder_ref = next_holder.clone();
             let join_handle = std::thread::spawn(move || {
-                order_messages(input_channel, output_channel, &next_holder_ref, ClientId(0))
+                order_messages(input_channel, output_channel, next_holder_ref, ClientId(0))
             });
-            let messages = get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>();
+            let messages = get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>(0);
             let chunk = pipeline_write_handle
                 .write_chunk_uninit(NUM_MESSAGES)
                 .unwrap();
@@ -618,6 +516,91 @@ mod test {
                 read_chunk.into_iter().count(),
                 "Not all messages were ordered and sent onward."
             );
+            assert!(
+                pipeline_read_handle.is_empty(),
+                "Did not consumer entire buffer"
+            );
+            assert_eq!(
+                NUM_MESSAGES as u32,
+                next_holder.load(Ordering::SeqCst),
+                "Next holder was not updated"
+            )
+        }
+
+        fn single_client_msg_reorder_test_multiple_round<
+            LogKeyType,
+            LogValueType,
+            const NUM_MESSAGES: usize,
+            const NUM_ROUNDS: usize,
+        >(
+            messages_function: fn(u32) -> Vec<ClientLogMessage<LogKeyType, LogValueType>>,
+        ) where
+            for<'a> LogKeyType: 'a + Clone + core::fmt::Debug + Send,
+            for<'a> LogValueType: 'a + Clone + core::fmt::Debug + Send,
+        {
+            let (mut pipeline_write_handle, input_channel) = rtrb::RingBuffer::new(NUM_MESSAGES);
+            let (output_channel, mut pipeline_read_handle) = rtrb::RingBuffer::new(NUM_MESSAGES);
+            let next_holder = Arc::new(AtomicU32::new(0));
+            let next_holder_ref = next_holder.clone();
+            let join_handle = std::thread::spawn(move || {
+                order_messages(input_channel, output_channel, next_holder_ref, ClientId(0))
+            });
+
+            for round in 0..NUM_ROUNDS {
+                let messages = messages_function((NUM_MESSAGES * round) as u32);
+                let chunk = pipeline_write_handle
+                    .write_chunk_uninit(NUM_MESSAGES)
+                    .unwrap();
+                let num_written = chunk.fill_from_iter(messages.clone());
+                assert_eq!(
+                    NUM_MESSAGES, num_written,
+                    "Not all messages were written in round {round}."
+                );
+                let mut remaining_messages = NUM_MESSAGES;
+                while remaining_messages > 0 {
+                    while pipeline_read_handle.is_empty() {}
+                    let read_chunk = pipeline_read_handle
+                        .read_chunk(pipeline_read_handle.slots())
+                        .unwrap();
+                    remaining_messages -= read_chunk.into_iter().count();
+                }
+                assert!(
+                    pipeline_read_handle.is_empty(),
+                    "Queue was not emptied in round {round}"
+                );
+                let order_messages_processed = next_holder.load_value();
+                let expected_messages_processed = ((round + 1) * NUM_MESSAGES) as u32;
+                assert_eq!(
+                    expected_messages_processed,
+                    order_messages_processed,
+                    "Next holder was {order_messages_processed}, expected {expected_messages_processed} in round {round}"
+                )
+            }
+
+            drop(pipeline_write_handle);
+            join_handle.join().unwrap().unwrap();
+            assert!(
+                pipeline_read_handle.is_empty(),
+                "Did not consumer entire buffer"
+            );
+        }
+
+        #[test_log::test]
+        fn single_client_msg_reorder_test_multiple_round_randomized() {
+            const NUM_MESSAGES: usize = 10_000;
+            const NUM_ROUNDS: usize = 10;
+            single_client_msg_reorder_test_multiple_round::<u32, u32, NUM_MESSAGES, NUM_ROUNDS>(
+                get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>,
+            )
+        }
+
+        #[test_log::test]
+        fn single_client_msg_reorder_test_multiple_round_sorted_input() {
+            const NUM_MESSAGES: usize = 10_000;
+            const NUM_ROUNDS: usize = 10;
+            single_client_msg_reorder_test_multiple_round::<u32, u32, NUM_MESSAGES, NUM_ROUNDS>(
+                get_sequence_of_n_messages::<u32, u32, NUM_MESSAGES>,
+            )
         }
     }
 
@@ -654,9 +637,9 @@ mod test {
         let (mut prefix_write_handle, apply_prefix_input) = rtrb::RingBuffer::new(NUM_MESSAGES);
 
         let next_holder = Arc::new(AtomicU32::new(0));
-        let next_holder_ref = next_holder;
+        let next_holder_ref = next_holder.clone();
         let order_join_handle = std::thread::spawn(move || {
-            order_messages(order_input, order_output, &next_holder_ref, ClientId(0))
+            order_messages(order_input, order_output, next_holder_ref, ClientId(0))
         });
         let apply_handle = std::thread::spawn(move || {
             let mut client_channels = [apply_input];
@@ -667,7 +650,7 @@ mod test {
                 Global::default(),
             )
         });
-        let messages = get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>();
+        let messages = get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>(0);
         let mut current_prefix = Prefix::<1>::new(0);
         current_prefix.states[0] += MessageId(NUM_MESSAGES as u32);
 
@@ -692,8 +675,8 @@ mod test {
 
     #[test_log::test]
     fn order_apply_messages_with_prefixes() {
-        const NUM_MESSAGES: usize = 1_000;
-        const NUM_ROUNDS: usize = 10;
+        const NUM_MESSAGES: usize = 10;
+        const NUM_ROUNDS: usize = 4;
         let (mut pipeline_write_handle, order_input) = rtrb::RingBuffer::new(NUM_MESSAGES);
         let (order_output, apply_input) = rtrb::RingBuffer::new(NUM_MESSAGES);
         let (apply_output, mut pipeline_read_handle) = rtrb::RingBuffer::new(NUM_MESSAGES);
@@ -701,76 +684,103 @@ mod test {
         let (mut prefix_write_handle, apply_prefix_input) = rtrb::RingBuffer::new(NUM_MESSAGES);
 
         let next_holder_for_order_handle = Arc::new(AtomicU32::new(0));
+        let next_holder_for_order_handle_ref = next_holder_for_order_handle.clone();
 
-        std::thread::scope(|s| {
-            let order_join_handle = s.spawn(move || {
-                order_messages(
-                    order_input,
-                    order_output,
-                    &next_holder_for_order_handle,
-                    ClientId(0),
-                )
-            });
+        let order_join_handle = std::thread::spawn(move || {
+            order_messages(
+                order_input,
+                order_output,
+                next_holder_for_order_handle,
+                ClientId(0),
+            )
+        });
 
-            let apply_handle = s.spawn(move || {
-                let mut client_channels = [apply_input];
-                apply_messages_pipeline::<u32, u32, 0, 1, Global, DefaultHashBuilder>(
-                    &mut client_channels,
-                    apply_prefix_input,
-                    apply_output,
-                    Global::default(),
-                )
-            });
+        let apply_handle = std::thread::spawn(move || {
+            let mut client_channels = [apply_input];
+            apply_messages_pipeline::<u32, u32, 0, 1, Global, DefaultHashBuilder>(
+                &mut client_channels,
+                apply_prefix_input,
+                apply_output,
+                Global::default(),
+            )
+        });
 
-            let (prefix_input_handle, ticker_input) = crossbeam_channel::bounded(NUM_ROUNDS);
+        let (prefix_input_handle, ticker_input) = crossbeam_channel::bounded(NUM_ROUNDS);
 
-            let ticker = s.spawn(move || {
-                let mut sync_provider = TestLocalSyncProvider {
-                    channel: ticker_input,
-                };
+        let ticker = std::thread::spawn(move || {
+            let mut sync_provider = TestLocalSyncProvider {
+                channel: ticker_input,
+            };
 
-                for _ in 0..NUM_ROUNDS {
-                    prefix_write_handle
-                        .push(sync_provider.tick().unwrap())
-                        .unwrap();
-                }
-            });
-
-            let messages = get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>();
-            for round in 0..NUM_ROUNDS {
-                assert_eq!(
-                    0,
-                    pipeline_write_handle.slots(),
-                    "pipeline write handle not empty"
-                );
-                let chunk = pipeline_write_handle
-                    .write_chunk_uninit(NUM_MESSAGES)
+            for _ in 0..NUM_ROUNDS {
+                prefix_write_handle
+                    .push(sync_provider.tick().unwrap())
                     .unwrap();
-                let num_written = chunk.fill_from_iter(messages.clone());
-                assert_eq!(NUM_MESSAGES, num_written, "Not all messages were written.");
-                prefix_input_handle
-                    .send(Prefix {
-                        id: round,
-                        states: [MessageId((NUM_MESSAGES * (round + 1)) as u32)],
-                    })
-                    .unwrap();
-                let mut to_get = NUM_MESSAGES;
-                while to_get > 0 {
-                    to_get -= pipeline_read_handle
-                        .read_chunk(pipeline_read_handle.slots())
-                        .into_iter()
-                        .count();
-                }
+            }
+        });
+
+        for round in 0..NUM_ROUNDS {
+            fence(Ordering::SeqCst);
+            assert_eq!(
+                NUM_MESSAGES,
+                pipeline_write_handle.slots(),
+                "pipeline write handle not empty on round {round}",
+            );
+            if !pipeline_read_handle.is_empty() {
                 assert_eq!(
                     0,
                     pipeline_read_handle.slots(),
-                    "Not everything was ready from the pipeline"
+                    "Pipeline read handle not empty on round {round}"
                 );
             }
-            drop(pipeline_write_handle);
-            order_join_handle.join().unwrap().unwrap();
-            let _state = apply_handle.join().unwrap().unwrap();
-            ticker.join().unwrap();
-        });
+            
+            let messages = get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>(
+                (round * NUM_MESSAGES) as u32,
+            );
+            let chunk = pipeline_write_handle
+                .write_chunk_uninit(NUM_MESSAGES)
+                .unwrap();
+            let num_written = chunk.fill_from_iter(messages.clone());
+            assert_eq!(NUM_MESSAGES, num_written, "Not all messages were written.");
+            assert_eq!(
+                0,
+                pipeline_read_handle.slots(),
+                "Not everything was ready from the pipeline"
+            );
+            prefix_input_handle
+                .send(Prefix {
+                    id: round,
+                    states: [MessageId((NUM_MESSAGES * (round + 1)) as u32)],
+                })
+                .unwrap();
+            let mut to_get = NUM_MESSAGES;
+            while to_get > 0 {
+                while pipeline_read_handle.slots() == 0 {}
+                let read_chunk = pipeline_read_handle
+                    .read_chunk(pipeline_read_handle.slots())
+                    .unwrap();
+                let (first, second) = read_chunk.as_slices();
+                let num_read = first.len() + second.len();
+                read_chunk.commit_all();
+                to_get -= num_read;
+                tracing::debug!(
+                    event = "got acks",
+                    remaining_this_round = to_get,
+                    num_read = num_read
+                )
+            }
+            let num_ordered = next_holder_for_order_handle_ref.load_value();
+            let expected_num_ordered = ((round + 1) * NUM_MESSAGES) as u32;
+
+            assert_eq!(
+                expected_num_ordered,
+                num_ordered,
+                "Not all messages were processed in round {round}, only {num_ordered} out of {expected_num_ordered} were.",
+            );
+        }
+        drop(pipeline_write_handle);
+        order_join_handle.join().unwrap().unwrap();
+        let _state = apply_handle.join().unwrap().unwrap();
+        ticker.join().unwrap();
     }
 }

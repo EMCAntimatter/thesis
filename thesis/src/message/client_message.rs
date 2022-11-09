@@ -4,9 +4,8 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
+use num::Integer;
 use serde::{Deserialize, Serialize};
-
-
 
 pub type MessageCount = u16;
 pub type MessageTimestamp = u64;
@@ -31,6 +30,14 @@ impl Add for MessageId {
 
     fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
+    }
+}
+
+impl<T: num::Integer + num::Unsigned + Into<u32>> Add<T> for MessageId {
+    type Output = Self;
+
+    fn add(self, rhs: T) -> Self::Output {
+        Self(self.0 + rhs.into())
     }
 }
 

@@ -57,7 +57,6 @@ pub struct PartitionedHashMap<
 {
     tables: [UnsafeCell<hashbrown::HashMap<u64, V, IdentityHasher, A>>; PARTITIONS],
     refcount: [AtomicBool; PARTITIONS], // Used to make sure there is never more than 1 reference to a partition
-    handles: Mutex<[Option<PartitionedHashMapHandle<K, V, PARTITIONS, A>>; PARTITIONS]>,
     hasher: HasherType,
     _phantom: PhantomData<Arc<K>>,
 }
@@ -113,31 +112,6 @@ where
         debug_assert!(partition <= PARTITIONS as u64);
         (partition as usize, h)
     }
-
-    fn make_handle(map: Arc<Self>, id: u64) -> PartitionedHashMapHandle<K, V, PARTITIONS> {
-        assert!(
-            (id as usize) < PARTITIONS,
-            "{id} is not a valid partition id, it is too large"
-        );
-        let flag = map.refcount[id as usize].compare_exchange(
-            false,
-            true,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-        assert_eq!(Ok(false), flag, "Handle for {id} was already taken.");
-        let table = map.tables[id as usize].get();
-        PartitionedHashMapHandle::new(id, table, map)
-    }
-
-    pub fn create_all_handles(
-        map: &Arc<Self>,
-    ) -> MutexGuard<[Option<PartitionedHashMapHandle<K, V, PARTITIONS>>; PARTITIONS]> {
-        let arr = std::array::from_fn(|id| Some(Self::make_handle(map.clone(), id as u64)));
-        let mut handles = map.handles.lock().unwrap();
-        *handles = arr;
-        handles
-    }
 }
 
 impl<K, V, const PARTITIONS: usize, A, HasherType>
@@ -173,31 +147,54 @@ where
             hasher,
             _phantom: PhantomData::default(),
             refcount: std::array::from_fn(|_| AtomicBool::new(false)),
-            handles: Mutex::new(std::array::from_fn(|_| None)),
         })
+    }
+
+    fn make_handle(map: Arc<Self>, id: u64) -> PartitionedHashMapHandle<K, V, PARTITIONS, A, HasherType> {
+        assert!(
+            (id as usize) < PARTITIONS,
+            "{id} is not a valid partition id, it is too large"
+        );
+        let flag = map.refcount[id as usize].compare_exchange(
+            false,
+            true,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        assert_eq!(Ok(false), flag, "Handle for {id} was already taken.");
+        let table = map.tables[id as usize].get();
+        PartitionedHashMapHandle::new(id, table, map)
+    }
+
+    pub fn create_all_handles(
+        map: &Arc<Self>,
+    ) -> [Option<PartitionedHashMapHandle<K, V, PARTITIONS, A, HasherType>>; PARTITIONS] {
+        std::array::from_fn(|id| Some(Self::make_handle(map.clone(), id as u64)))
     }
 }
 
 #[derive(Debug)]
-pub struct PartitionedHashMapHandle<K, V, const PARTITIONS: usize, A = Global>
+pub struct PartitionedHashMapHandle<K, V, const PARTITIONS: usize, A = Global, S = ahash::AHasher>
 where
     K: Eq + Hash,
     A: Allocator + Clone,
+    S: Hasher + Default,
 {
     partition_id: u64,
     inner: *mut hashbrown::HashMap<u64, V, IdentityHasher, A>,
-    _parent: Arc<PartitionedHashMap<K, V, PARTITIONS>>,
+    _parent: Arc<PartitionedHashMap<K, V, PARTITIONS, A, S>>,
 }
 
-impl<K, V, const PARTITIONS: usize, A> PartitionedHashMapHandle<K, V, PARTITIONS, A>
+impl<K, V, const PARTITIONS: usize, A, S> PartitionedHashMapHandle<K, V, PARTITIONS, A, S>
 where
     K: Eq + Hash,
     A: Allocator + Clone,
+    S: Hasher + Default,
 {
     pub fn new(
         partition_id: u64,
         inner: *mut hashbrown::HashMap<u64, V, IdentityHasher, A>,
-        _parent: Arc<PartitionedHashMap<K, V, PARTITIONS>>,
+        _parent: Arc<PartitionedHashMap<K, V, PARTITIONS, A, S>>,
     ) -> Self {
         Self {
             partition_id,

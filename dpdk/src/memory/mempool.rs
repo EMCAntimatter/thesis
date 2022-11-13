@@ -1,10 +1,11 @@
-use std::{marker::PhantomData, ptr::NonNull};
+use std::{marker::PhantomData, ptr::NonNull, cell::UnsafeCell};
 
 use dpdk_sys::{
     rte_mempool, rte_mempool_cache, rte_mempool_create, rte_mempool_free, RTE_MAX_LCORE,
 };
 
 use crate::eal::{current_lcore_id, RteErrnoValue};
+
 
 #[repr(transparent)]
 pub struct Mempool<'mempool, T> {

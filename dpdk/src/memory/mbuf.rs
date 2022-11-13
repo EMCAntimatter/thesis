@@ -1,7 +1,7 @@
 use core::slice;
 use std::marker::PhantomData;
 
-use dpdk_sys::{rte_mbuf, rte_pktmbuf_alloc};
+use dpdk_sys::{rte_mbuf, rte_pktmbuf_alloc, rte_pktmbuf_free_bulk};
 
 use super::mempool::Mempool;
 
@@ -58,12 +58,24 @@ impl<'buff, T> PktMbuf<'buff, T> {
 
 impl<'buff, T: ?Sized> Drop for PktMbuf<'buff, T> {
     fn drop(&mut self) {
-        todo!()
+        unsafe {
+            let self_ptr_buf = [self.inner].as_mut_ptr();
+            rte_pktmbuf_free_bulk(self_ptr_buf, 1);
+        }
     }
 }
 
 impl<'buff, T: ?Sized> From<&'buff mut rte_mbuf> for PktMbuf<'buff, T> {
     fn from(buf: &'buff mut rte_mbuf) -> Self {
+        Self {
+            inner: buf,
+            phantom: PhantomData::default(),
+        }
+    }
+}
+
+impl<T: ?Sized> From<*mut rte_mbuf> for PktMbuf<'static, T> {
+    fn from(buf: *mut rte_mbuf) -> Self {
         Self {
             inner: buf,
             phantom: PhantomData::default(),

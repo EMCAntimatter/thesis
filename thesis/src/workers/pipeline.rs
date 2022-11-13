@@ -1,16 +1,17 @@
 use std::{
     alloc::Allocator,
-    collections::LinkedList,
     hash::Hash,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use bincode::Options;
 use dpdk::{
-    memory::{allocator::DPDKAllocator, mbuf::PktMbuf},
+    device::eth::dev::{get_port_mtu, EthdevPortId, EventQueueId},
+    memory::{
+        allocator::{DPDKAllocator, DPDK_ALLOCATOR},
+        mbuf::PktMbuf,
+    },
     raw::rte_mbuf,
 };
 
@@ -24,7 +25,7 @@ use tracing::instrument;
 use crate::{
     message::{
         ack::AckMessage,
-        client_message::{ClientId, ClientLogMessage, ClientMessageOperation},
+        client_message::{ClientLogMessage, ClientMessageOperation},
         Message,
     },
     prefix::{Prefix, PrefixInner},
@@ -33,68 +34,118 @@ use crate::{
 
 use core::fmt::Debug;
 
-use super::eth::read_packets_from_nic_port_0_into_channel;
+use super::eth::read_from_nic_port_into_buffer;
 
 pub type SpscProducerChannelHandle<T> = rtrb::Producer<T>;
 pub type SpscConsumerChannelHandle<T> = rtrb::Consumer<T>;
 pub type MpmcProducerChannelHandle<T> = kanal::Sender<T>;
 pub type MpmcConsumerChannelHandle<T> = kanal::Receiver<T>;
 
-/// Parallel if NIC supports it
-pub fn accept_packets<const SIZE: usize>(
-    output_channel: SpscProducerChannelHandle<&'static mut rte_mbuf>,
-) {
-    read_packets_from_nic_port_0_into_channel::<SIZE>(output_channel)
-}
+static SHUTDOWN_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// Parallel
-#[instrument(skip_all)]
-pub fn parse_packets<LogKeyType, LogValueType, A: Allocator, const NUM_CLIENTS: usize>(
-    mut input_channel: SpscConsumerChannelHandle<&'static mut rte_mbuf>,
+// #[instrument(skip_all)]
+pub fn parse_packets<
+    LogKeyType,
+    LogValueType,
+    A: Allocator,
+    const NUM_CLIENTS: usize,
+    const BUFFER_SIZE: usize,
+    const ETHDEV_PORT_ID: EthdevPortId,
+    const ETHDEV_QUEUE_ID: EventQueueId,
+>(
     mut client_log_message_channels: [SpscProducerChannelHandle<ClientLogMessage<LogKeyType, LogValueType>>;
         NUM_CLIENTS],
 ) -> Result<(), anyhow::Error>
 where
     Vec<Message<LogKeyType, LogValueType>, DPDKAllocator>: Serialize + DeserializeOwned,
-    LogKeyType: Eq + Hash + Serialize + DeserializeOwned + core::fmt::Debug,
-    LogValueType: Serialize + DeserializeOwned + core::fmt::Debug,
+    LogKeyType: Eq + Hash + Serialize + DeserializeOwned + core::fmt::Debug + Clone,
+    LogValueType: Serialize + DeserializeOwned + core::fmt::Debug + Clone,
 {
+    let mut buffer = unsafe {
+        Box::<[Option<NonNull<rte_mbuf>>; BUFFER_SIZE], DPDKAllocator>::new_zeroed_in(
+            DPDK_ALLOCATOR,
+        )
+        .assume_init()
+    };
+    for channel in client_log_message_channels.iter() {
+        assert!(
+            BUFFER_SIZE >= channel.buffer().capacity(),
+            "Channel was too small"
+        );
+    }
+    let mut client_log_message_buffer = {
+        let mtu = get_port_mtu(ETHDEV_PORT_ID).expect("Failed to get mtu") as usize;
+        let max_usable_bytes_in_packet = mtu - 28; // Ether + IPv4 (which is smaller) + UDP
+        let max_messages_per_pkt = max_usable_bytes_in_packet
+            .div_ceil(std::mem::size_of::<Message<LogKeyType, LogValueType>>());
+        Vec::with_capacity_in(max_messages_per_pkt, DPDK_ALLOCATOR)
+    };
     loop {
-        if input_channel.is_abandoned() && input_channel.is_empty() {
+        let num_read = read_from_nic_port_into_buffer::<BUFFER_SIZE, ETHDEV_PORT_ID, ETHDEV_QUEUE_ID>(
+            buffer.as_mut(),
+        );
+        if num_read == 0 && SHUTDOWN_FLAG.load(Ordering::Acquire) {
             tracing::info!("Input channel is abandonded and empty, exiting");
             return Ok(()); // returning causes all of the client log message channels to be abandoned as well.
-        }
-        let num_to_read = input_channel.slots();
-        let chunk = input_channel.read_chunk(num_to_read).unwrap();
-        chunk
-            .into_iter()
-            .flat_map(|pkt| {
-                let buf: PktMbuf<Vec<Message<LogKeyType, LogValueType>>> = PktMbuf::from(pkt);
+        } else {
+            for pkt in &mut buffer[0..num_read] {
+                let mut pkt = pkt.take().unwrap();
+                // Safe because buffer[0..num_read] was initalized
+                let buf: PktMbuf<Vec<Message<LogKeyType, LogValueType>>> =
+                    unsafe { PktMbuf::from(pkt.as_mut()) };
                 let data = buf.data_as_byte_slice();
-                let msg: Vec<Message<LogKeyType, LogValueType>> = bincode::options()
+                let msgs: Vec<Message<LogKeyType, LogValueType>> = bincode::options()
                     .reject_trailing_bytes()
                     .with_fixint_encoding()
                     .with_native_endian()
                     .with_limit(10_000) // Larger than the packet size that should be accepted.
                     .deserialize(data)
                     .unwrap();
-                msg
-            })
-            .for_each(|msg| {
-                match msg {
-                    Message::IncomingClientMessage(mut msg) => loop {
-                        tracing::trace!(event = "Got message", msg = %msg);
-                        let client_id = msg.client_id.0 as usize;
-                        match client_log_message_channels[client_id].push(msg) {
-                            Ok(()) => break,
-                            Err(rtrb::PushError::Full(err)) => {
-                                msg = err;
+                drop(buf); // frees the underlying PktMBuf
+                msgs.into_iter()
+                    .map(|msg| match msg {
+                        Message::IncomingClientMessage(msg) => msg,
+                        Message::AckMessage(_) => {
+                            unimplemented!("Ack message input is not yet supported")
+                        }
+                    })
+                    .group_by(|msg| msg.client_id)
+                    .into_iter()
+                    .for_each(|(client_id, messages)| {
+                        let mut max_allowed_index: usize = 0;
+                        let mut iter = messages.enumerate();
+                        while max_allowed_index < client_log_message_buffer.len() {
+                            match iter.next() {
+                                Some((index, msg)) => {
+                                    max_allowed_index = index;
+                                    client_log_message_buffer[index] = msg;
+                                }
+                                None => unreachable!(),
                             }
                         }
-                    },
-                    Message::AckMessage(_) => unimplemented!(), // This shouldn't happen
-                }
-            });
+                        for (_, msg) in iter {
+                            client_log_message_buffer.push(msg);
+                        }
+                        let channel = client_log_message_channels
+                            .get_mut(client_id.0 as usize)
+                            .unwrap();
+                        while channel.slots() < max_allowed_index + 1 {} //spin
+                        let mut chunk = channel.write_chunk_uninit(max_allowed_index + 1).unwrap();
+                        let (first, second) = chunk.as_mut_slices();
+                        for index in 0..(first.len().max(max_allowed_index + 1)) {
+                            first[index].write(client_log_message_buffer[index].clone());
+                        }
+                        if first.len() < max_allowed_index + 1 {
+                            for index in 0..(second.len().max(max_allowed_index + 1 - first.len()))
+                            {
+                                first[index]
+                                    .write(client_log_message_buffer[index + first.len()].clone());
+                            }
+                        }
+                    });
+            }
+        }
     }
 }
 
@@ -466,7 +517,7 @@ mod test {
                 .collect_vec();
             let mut unstructured = Unstructured::new(&data);
             let mut v = Vec::with_capacity(NUM_MESSAGES);
-            (0..NUM_MESSAGES).for_each(|i| {
+            (0..NUM_MESSAGES).for_each(|_| {
                 let mut msg: ClientLogMessage<LogKeyType, LogValueType> =
                     unstructured.arbitrary().unwrap();
                 msg.client_id = ClientId(0);
@@ -637,7 +688,7 @@ mod test {
         let (mut prefix_write_handle, apply_prefix_input) = rtrb::RingBuffer::new(NUM_MESSAGES);
 
         let next_holder = Arc::new(AtomicU32::new(0));
-        let next_holder_ref = next_holder.clone();
+        let next_holder_ref = next_holder;
         let order_join_handle = std::thread::spawn(move || {
             order_messages(order_input, order_output, next_holder_ref, ClientId(0))
         });
@@ -733,7 +784,7 @@ mod test {
                     "Pipeline read handle not empty on round {round}"
                 );
             }
-            
+
             let messages = get_sequence_of_n_shuffled_messages::<u32, u32, NUM_MESSAGES>(
                 (round * NUM_MESSAGES) as u32,
             );

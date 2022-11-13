@@ -8,9 +8,9 @@ use dpdk::raw::rte_mbuf;
 use partitioned_swiss_table::table::{PartitionedHashMap, PartitionedHashMapHandle};
 use rtrb::{Consumer, Producer};
 use serde::{de::DeserializeOwned, Serialize};
+use tracing_subscriber::registry::Data;
 
 use crate::message::{ack::AckMessage, client_message::ClientLogMessage};
-
 
 pub type RtrbChanPair<T> = (Producer<T>, Consumer<T>);
 pub type KanalChanPair<T> = (kanal::Sender<T>, kanal::Receiver<T>);
@@ -29,10 +29,12 @@ pub struct DatabaseComponents<
     HasherType: Hasher + Default,
 {
     pub table: Arc<PartitionedHashMap<LogKeyType, LogValueType, NUM_PARTITIONS, Alloc, HasherType>>,
-    pub handles:
-        [Option<PartitionedHashMapHandle<LogKeyType, LogValueType, NUM_PARTITIONS, Alloc, HasherType>>; NUM_PARTITIONS],
-    pub order_input_channels: [RtrbChanPair<&'static mut rte_mbuf> ; NUM_CLIENTS],
-    pub apply_input_channels: [KanalChanPair<ClientLogMessage<LogKeyType, LogValueType>>; NUM_PARTITIONS],
+    pub handles: [Option<
+        PartitionedHashMapHandle<LogKeyType, LogValueType, NUM_PARTITIONS, Alloc, HasherType>,
+    >; NUM_PARTITIONS],
+    pub order_input_channels: [RtrbChanPair<&'static mut rte_mbuf>; NUM_CLIENTS],
+    pub apply_input_channels:
+        [KanalChanPair<ClientLogMessage<LogKeyType, LogValueType>>; NUM_PARTITIONS],
     pub apply_output_channels: [RtrbChanPair<AckMessage<LogValueType>>; NUM_PARTITIONS],
 }
 
@@ -53,7 +55,11 @@ pub trait Database<
     fn new_components(
     ) -> DatabaseComponents<LogKeyType, LogValueType, NUM_PARTITIONS, NUM_CLIENTS, Alloc, HasherType>
     {
-        let table = PartitionedHashMap::with_capacity_and_hasher_in(100_000, HasherType::default(), Alloc::default());
+        let table = PartitionedHashMap::with_capacity_and_hasher_in(
+            100_000,
+            HasherType::default(),
+            Alloc::default(),
+        );
         let handles = PartitionedHashMap::create_all_handles(&table);
         let order_input_channels =
             std::array::from_fn(|_| rtrb::RingBuffer::new(IO_INPUT_CHANNEL_CAPACITY));
@@ -66,7 +72,96 @@ pub trait Database<
             handles,
             order_input_channels,
             apply_input_channels,
-            apply_output_channels
+            apply_output_channels,
         }
+    }
+}
+
+pub struct TestDB<
+    LogKeyType,
+    LogValueType,
+    const IO_INPUT_CHANNEL_CAPACITY: usize = 400_000,
+    const NUM_PARTITIONS: usize = 1,
+    const NUM_CLIENTS: usize = 1,
+    Alloc = Global,
+    HasherType = ahash::AHasher,
+> where
+    LogKeyType: Eq + Hash + Serialize + DeserializeOwned + core::fmt::Debug,
+    LogValueType: Serialize + DeserializeOwned + core::fmt::Debug,
+    Alloc: Allocator + Clone + Default,
+    HasherType: Hasher + Default, {}
+
+impl<
+        LogKeyType,
+        LogValueType,
+        const IO_INPUT_CHANNEL_CAPACITY: usize,
+        const NUM_PARTITIONS: usize,
+        const NUM_CLIENTS: usize,
+        Alloc,
+        HasherType,
+    >
+    Database<
+        LogKeyType,
+        LogValueType,
+        IO_INPUT_CHANNEL_CAPACITY,
+        NUM_PARTITIONS,
+        NUM_CLIENTS,
+        Alloc,
+        HasherType,
+    >
+    for TestDB<
+        LogKeyType,
+        LogValueType,
+        IO_INPUT_CHANNEL_CAPACITY,
+        NUM_PARTITIONS,
+        NUM_CLIENTS,
+        Alloc,
+        HasherType,
+    >
+where
+    LogKeyType: Eq + Hash + Serialize + DeserializeOwned + core::fmt::Debug,
+    LogValueType: Serialize + DeserializeOwned + core::fmt::Debug,
+    Alloc: Allocator + Clone + Default,
+    HasherType: Hasher + Default,
+{
+}
+
+impl<
+        LogKeyType,
+        LogValueType,
+        const IO_INPUT_CHANNEL_CAPACITY: usize,
+        const NUM_PARTITIONS: usize,
+        const NUM_CLIENTS: usize,
+        Alloc,
+        HasherType,
+    >
+    TestDB<
+        LogKeyType,
+        LogValueType,
+        IO_INPUT_CHANNEL_CAPACITY,
+        NUM_PARTITIONS,
+        NUM_CLIENTS,
+        Alloc,
+        HasherType,
+    >
+where
+    LogKeyType: Eq + Hash + Serialize + DeserializeOwned + core::fmt::Debug,
+    LogValueType: Serialize + DeserializeOwned + core::fmt::Debug,
+    Alloc: Allocator + Clone + Default,
+    HasherType: Hasher + Default,
+{
+    pub fn start_test_db(
+        test_fn: impl FnOnce(
+            [RtrbChanPair<&'static mut rte_mbuf>; NUM_CLIENTS],
+            [RtrbChanPair<AckMessage<LogValueType>>; NUM_PARTITIONS],
+        ),
+    ) {
+        let DatabaseComponents {
+            table,
+            handles,
+            order_input_channels,
+            apply_input_channels,
+            apply_output_channels,
+        } = Self::new_components();
     }
 }

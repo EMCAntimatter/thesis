@@ -15,6 +15,7 @@
 
 use dpdk::device::event::EventDeviceId;
 
+pub mod db;
 pub mod log;
 pub mod message;
 pub mod prefix;
@@ -24,7 +25,6 @@ pub mod sync_provider;
 #[cfg(test)]
 pub mod testing;
 pub mod workers;
-pub mod db;
 
 #[cfg(test)]
 extern crate test;

@@ -1,4 +1,8 @@
-use std::{intrinsics::transmute, ptr::slice_from_raw_parts_mut, sync::atomic::AtomicPtr};
+use std::{
+    intrinsics::transmute,
+    ptr::{slice_from_raw_parts_mut, NonNull},
+    sync::atomic::AtomicPtr,
+};
 
 use dpdk_sys::{
     rte_eth_call_rx_callbacks, rte_eth_dev_is_valid_port, rte_eth_fp_ops, rte_mbuf,
@@ -10,7 +14,7 @@ use super::dev::{EthdevPortId, EventQueueId};
 pub fn receive_burst<const NUM_PACKETS: usize>(
     port_id: EthdevPortId,
     queue_id: EventQueueId,
-    rx_buffer: &mut [&mut rte_mbuf; NUM_PACKETS],
+    rx_buffer: &mut [Option<NonNull<rte_mbuf>>; NUM_PACKETS],
 ) -> u16 {
     debug_assert!(
         u32::from(port_id) < RTE_MAX_ETHPORTS,

@@ -3,8 +3,10 @@ use std::{
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
-    },
+    }, cmp,
 };
+
+use dpdk::memory::allocator::DPDKBox;
 
 use core::fmt::Debug;
 
@@ -14,6 +16,12 @@ use tracing::instrument;
 use crate::message::client_message::{ClientId, ClientLogMessage, MessageId};
 
 use super::pipeline::{SpscConsumerChannelHandle, SpscProducerChannelHandle};
+
+pub trait Reorderable {
+    type ReorderableKey: Into<usize>;
+
+    fn key(&self) -> Self::ReorderableKey;
+}
 
 /// Parallel when partitioned by client ID
 #[instrument(skip(input_channel, out_channel, next_holder))]
@@ -45,7 +53,12 @@ where
             .unwrap()
             .into_iter();
         // ordering_list = process_batch(message_batch, &next_holder, &mut out_channel, ordering_list);
-        ordering_list = process_batch_with_tree_map(message_batch, &next_holder, &mut out_channel, ordering_list);
+        ordering_list = process_batch_with_tree_map(
+            message_batch,
+            &next_holder,
+            &mut out_channel,
+            ordering_list,
+        );
     }
 }
 
@@ -138,7 +151,7 @@ where
         .iter()
         .take_while(|msg| {
             let next = next_holder.load(Ordering::SeqCst);
-            if msg.0.0 == next {
+            if msg.0 .0 == next {
                 next_holder.fetch_add(1, Ordering::SeqCst);
                 true
             } else {

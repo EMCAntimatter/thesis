@@ -28,8 +28,7 @@ WORKDIR /dpdk-22.03/
 RUN meson -Dtests=false -Dc_std=c18 /dpdk-22.03/build
 
 # download
-RUN --mount=type=cache,target=/dpdk-22.03 \
-    --mount=type=cache,target=/ccache \
+RUN --mount=type=cache,target=/ccache \
     ninja -j $(expr $(nproc) / 2 ) -C /dpdk-22.03/build install
 
 RUN ldconfig
@@ -41,7 +40,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 		set -eux; \
         rustup install nightly ; \
         rustup default nightly ; \
-        cargo install bindgen cargo-fuzz
+        cargo install bindgen-cli
 
 # build rust
 WORKDIR /rust

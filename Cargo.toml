@@ -26,3 +26,6 @@ lto = true
 overflow-checks = false
 opt-level = 3
 debug = true
+
+# [profile.test]
+# opt-level = 3

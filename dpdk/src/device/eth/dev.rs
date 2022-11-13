@@ -1,9 +1,11 @@
+use core::panic;
 use std::{backtrace::Backtrace, mem::MaybeUninit};
 
 use dpdk_sys::{
-    rte_eth_conf, rte_eth_dev_configure, rte_eth_dev_count_avail, rte_eth_dev_info,
-    rte_eth_dev_info_get, rte_eth_dev_socket_id, rte_eth_dev_start, rte_eth_rx_queue_setup,
-    rte_eth_tx_queue_setup, rte_socket_id, EINVAL, ENODEV, ENOTSUP, RTE_MEMPOOL_CACHE_MAX_SIZE,
+    rte_eth_conf, rte_eth_dev_configure, rte_eth_dev_count_avail, rte_eth_dev_get_mtu,
+    rte_eth_dev_info, rte_eth_dev_info_get, rte_eth_dev_socket_id, rte_eth_dev_start,
+    rte_eth_rx_queue_setup, rte_eth_tx_queue_setup, rte_socket_id, EINVAL, ENODEV, ENOTSUP,
+    RTE_MEMPOOL_CACHE_MAX_SIZE,
 };
 use thiserror::Error;
 
@@ -102,6 +104,28 @@ pub fn get_ethdev_port_info(port: EthdevPortId) -> Result<rte_eth_dev_info, Ethd
         unknown => {
             panic!("Unknown error code {unknown}")
         }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum EthdevGetPortMtuError {
+    #[error("Invalid port id: {port}")]
+    PortDoesNotExistError {
+        port: EthdevPortId,
+        backtrace: Backtrace,
+    },
+}
+
+pub fn get_port_mtu(port: EthdevPortId) -> Result<u16, EthdevGetPortMtuError> {
+    let mut mtu = 0;
+    let ret: i32 = unsafe { rte_eth_dev_get_mtu(port, &mut mtu) };
+    match -ret as u32 {
+        0 => Ok(mtu),
+        ENODEV => Err(EthdevGetPortMtuError::PortDoesNotExistError {
+            port,
+            backtrace: Backtrace::capture(),
+        }),
+        unknown => panic!("Unknown error value -{unknown}"),
     }
 }
 

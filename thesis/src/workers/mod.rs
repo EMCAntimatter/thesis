@@ -1,6 +1,6 @@
 pub mod eth;
-pub mod pipeline;
 pub mod order_messages;
+pub mod pipeline;
 
 use dpdk::{
     self,
@@ -22,7 +22,7 @@ use crate::{
 };
 
 use self::{
-    eth::{read_packets_from_nic_port_0_into_channel, write_packets_to_nic_port_0},
+    eth::{read_packets_from_nic_port_into_channel, write_packets_to_nic_port_0},
     pipeline::{SpscConsumerChannelHandle, SpscProducerChannelHandle},
 };
 
@@ -62,7 +62,7 @@ pub extern "C" fn lcore_init(_unused: *mut c_void) -> c_int {
     match lcore {
         // 0 | 1 => {}
         2 => {
-            read_packets_from_nic_port_0_into_channel::<RX_RING_BUFFER_SIZE>(
+            read_packets_from_nic_port_into_channel::<RX_RING_BUFFER_SIZE, 0, 0>(
                 INPUT.lock().take().unwrap(),
             );
         }

@@ -1,4 +1,7 @@
+use std::ptr::NonNull;
+
 use dpdk::{
+    device::eth::dev::{EthdevPortId, EventQueueId},
     memory::allocator::{DPDKAllocator, DPDK_ALLOCATOR},
     raw::rte_mbuf,
 };
@@ -24,17 +27,34 @@ use super::pipeline::{SpscConsumerChannelHandle, SpscProducerChannelHandle};
 //     }
 // }
 
-pub fn read_packets_from_nic_port_0_into_channel<const SIZE: usize>(
+pub fn read_from_nic_port_into_buffer<
+    const BUFFER_SIZE: usize,
+    const ETHDEV_PORT_ID: EthdevPortId,
+    const ETHDEV_QUEUE_ID: EventQueueId,
+>(
+    buf: &mut [Option<NonNull<rte_mbuf>>; BUFFER_SIZE],
+) -> usize {
+    return dpdk::device::eth::rx::receive_burst(ETHDEV_PORT_ID, ETHDEV_QUEUE_ID, buf) as usize;
+}
+
+pub fn read_packets_from_nic_port_into_channel<
+    const BUFFER_SIZE: usize,
+    const ETHDEV_PORT_ID: EthdevPortId,
+    const ETHDEV_QUEUE_ID: EventQueueId,
+>(
     mut output_channel: SpscProducerChannelHandle<&'static mut rte_mbuf>,
 ) {
     let mut buffer = unsafe {
-        Box::<[&mut rte_mbuf; SIZE], DPDKAllocator>::new_uninit_in(DPDK_ALLOCATOR).assume_init()
+        Box::<[Option<NonNull<rte_mbuf>>; BUFFER_SIZE], DPDKAllocator>::new_uninit_in(
+            DPDK_ALLOCATOR,
+        )
+        .assume_init()
     };
     loop {
-        let count =
-            dpdk::device::eth::rx::receive_burst(ETHDEV_PORT_ID, ETHDEV_QUEUE_ID, buffer.as_mut())
-                as usize;
         let mut written_to_channel = 0;
+        let count = read_from_nic_port_into_buffer::<BUFFER_SIZE, ETHDEV_PORT_ID, ETHDEV_QUEUE_ID>(
+            &mut buffer,
+        );
         while written_to_channel < count {
             let remaining = count - written_to_channel;
             let to_write = output_channel.slots().min(remaining);

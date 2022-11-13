@@ -150,7 +150,10 @@ where
         })
     }
 
-    fn make_handle(map: Arc<Self>, id: u64) -> PartitionedHashMapHandle<K, V, PARTITIONS, A, HasherType> {
+    fn make_handle(
+        map: Arc<Self>,
+        id: u64,
+    ) -> PartitionedHashMapHandle<K, V, PARTITIONS, A, HasherType> {
         assert!(
             (id as usize) < PARTITIONS,
             "{id} is not a valid partition id, it is too large"
